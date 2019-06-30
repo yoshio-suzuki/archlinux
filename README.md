@@ -380,17 +380,19 @@ alias vi='vim'
 ```
 $ yay -S hdparm smartmontools lm_sensors htop iotop ddcutil i2c-tools
 $ echo "i2c-dev" > /etc/modules-load.d/i2c-dev.conf
-$ sensors-detect
+$ sudo modprove i2c-dev
+$ sudo sensors-detect
 全てEnter
 ```
 
 * グラフィック
 ```
 $ yay -S intel-media-driver libva-utils
+$ LIBVA_DRIVER_NAME=iHD vainfo
 $ sudo vim /etc/environment
 追加
 LIBVA_DRIVER_NAME=iHD
-$ LIBVA_DRIVER_NAME=iHD vainfo
+
 $ sudo vim /boot/loader/entries/arch.conf
 オプション追加
 options ... i915.enable_fbc=1 i915.fastboot=1
@@ -419,7 +421,7 @@ $ sudo usermod -aG docker ユーザ名
 ```
 $ yay -S otf-ipafont noto-fonts-cjk noto-fonts-emoji
 $ yay -S fcitx-mozc fcitx-gtk3 fcitx-configtool
-Fcitx Config > Input Method > Add input method > Only Show Current Language:あんチェック > Keybod - JapaneseとMozcを追加(Keyboard - English(US)は削除)
+Fcitx Config > Input Method > Add input method > Only Show Current Language:アンチェック > Keybod - JapaneseとMozcを追加(Keyboard - English(US)は削除)
 $ sudo vim /etc/environment
 追加
 GTK_IM_MODULE=fcitx
