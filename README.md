@@ -1,6 +1,17 @@
 # Arch Linuxインストール手順
 
-参考：[Arch Linux](https://www.archlinux.org/)
+* 参考：[Arch Linux](https://www.archlinux.org/)
+* Myマシン構成：
+    * M/B: MSi Z370I GAMING PRO CARBON AC
+    * CPU: i5-8400
+    * MEM: 16GB
+    * SSD: 360GB
+    * HDD: 1TB
+    * DGP: GTX1070
+* モニタ接続
+    * IGP:DP <-> モニタ:DP1(メイン画面)
+    * DGP:DP <-> モニタ:DP2(QEMU用)
+    * IGP:HDMI <-> AVアンプ:HDMI <-> TV:HDMI(YouTube用)
 
 ## Pre-installation
 ---
@@ -479,14 +490,19 @@ $ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
 $ yay -S nvidia
 ```
 
-* モニタ設定変更時はmonitors.xmlを毎回コピー
+## QEMU/KVM
+---
+
 ```
-$ sudo cp ~/.config/monitors.xml /var/lib/gdm/.config/monitors.xml
-$ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
+$ sudo vim /boot/loader/entries/arch.conf
+オプション追加
+options ... intel_iommu=on iommu=pt
 ```
 
-## QEMU/KBM
----
+```
+$ yay -S qemu-headless ovmf
+```
+
 ```
 $ yay -S gnome-xrandr
 ```
