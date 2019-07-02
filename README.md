@@ -401,6 +401,18 @@ $ sudo vim /boot/loader/entries/arch.conf
 options ... i915.enable_fbc=1 i915.fastboot=1
 ```
 
+* Xorg
+* NVIDIAグラフィックカードはあるが表示に使わない場合（CUDA等）、Intelのみを使うように明示
+```
+$ sudo vim /etc/X11/xorg.conf.d/20-intel.conf
+Section "Device"
+   Identifier  "Intel Graphics"
+   Driver      "modesetting"
+   Option      "AccelMethod" "glamor"
+   BusID       lspciして確認する
+EndSection
+```
+
 * OpenCL
 ```
 $ yay -S intel-compute-runtime clinfo
