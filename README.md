@@ -380,19 +380,22 @@ alias vi='vim'
 ```
 $ yay -S hdparm smartmontools lm_sensors htop iotop ddcutil i2c-tools
 $ echo "i2c-dev" > /etc/modules-load.d/i2c-dev.conf
-$ sudo modprove i2c-dev
+$ sudo modprobe i2c-dev
 $ sudo sensors-detect
 全てEnter
 ```
 
-* グラフィック
+* Hardware video acceleration
 ```
 $ yay -S intel-media-driver libva-utils
 $ LIBVA_DRIVER_NAME=iHD vainfo
 $ sudo vim /etc/environment
 追加
 LIBVA_DRIVER_NAME=iHD
+```
 
+* Intel graphics
+```
 $ sudo vim /boot/loader/entries/arch.conf
 オプション追加
 options ... i915.enable_fbc=1 i915.fastboot=1
@@ -407,14 +410,6 @@ $ clinfo
 * ファイル
 ```
 $ yay -S ntfs-3g exfat-utils rsync
-```
-
-* Docker
-```
-$ yay -S docker-compose
-$ sudo systemctl enable docker
-$ sudo systemctl start docker
-$ sudo usermod -aG docker ユーザ名
 ```
 
 * 日本語
@@ -444,12 +439,10 @@ hwdec=vaapi
 * 開発
 ```
 $ yay -S visual-studio-code-bin slack-desktop
-```
-
-* モニタ設定変更時はmonitors.xmlを毎回コピー
-```
-$ sudo cp ~/.config/monitors.xml /var/lib/gdm/.config/monitors.xml
-$ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
+$ yay -S docker-compose
+$ sudo systemctl enable docker
+$ sudo systemctl start docker
+$ sudo usermod -aG docker ユーザ名
 ```
 
 * 省電力
@@ -459,10 +452,28 @@ options iwlwifi power_save=1 d0i3_disable=0 uapsd_disable=0
 options iwldvm force_cam=0
 ```
 
+* モニタ設定変更時はmonitors.xmlを毎回コピー
+```
+$ sudo cp ~/.config/monitors.xml /var/lib/gdm/.config/monitors.xml
+$ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
+```
+
 ## NVIDIA
 ---
 
-## VM
+### ドライバインストール
+* インストール後再起動
+```
+$ yay -S nvidia
+```
+
+* モニタ設定変更時はmonitors.xmlを毎回コピー
+```
+$ sudo cp ~/.config/monitors.xml /var/lib/gdm/.config/monitors.xml
+$ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
+```
+
+## QEMU/KBM
 ---
 ```
 $ yay -S gnome-xrandr
