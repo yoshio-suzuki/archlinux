@@ -8,10 +8,6 @@
     * SSD: 360GB
     * HDD: 1TB
     * DGP: GTX1070
-* モニタ接続
-    * IGP:DP <-> モニタ:DP1(メイン画面)
-    * DGP:DP <-> モニタ:DP2(QEMU用)
-    * IGP:HDMI <-> AVアンプ:HDMI <-> TV:HDMI(YouTube用)
 
 ## Pre-installation
 ---
@@ -412,18 +408,6 @@ $ sudo vim /boot/loader/entries/arch.conf
 options ... i915.enable_fbc=1 i915.fastboot=1
 ```
 
-* Xorg
-* NVIDIAグラフィックカードはあるが表示に使わない場合（CUDA等）、Intelのみを使うように明示
-```
-$ sudo vim /etc/X11/xorg.conf.d/20-intel.conf
-Section "Device"
-   Identifier  "Intel Graphics"
-   Driver      "modesetting"
-   Option      "AccelMethod" "glamor"
-   BusID       lspciして確認する
-EndSection
-```
-
 * OpenCL
 ```
 $ yay -S intel-compute-runtime clinfo
@@ -468,11 +452,17 @@ $ sudo systemctl start docker
 $ sudo usermod -aG docker ユーザ名
 ```
 
-* 省電力
+* WiFi無効化
 ```
 $ sudo vim /etc/modprobe.d/iwlwifi.conf
-options iwlwifi power_save=1 d0i3_disable=0 uapsd_disable=0
-options iwldvm force_cam=0
+blacklist iwlwifi
+```
+
+* Bluetooth無効化
+```
+$ sudo vim /etc/modprobe.d/bluetooth.conf
+blacklist btusb
+blacklist bluetooth
 ```
 
 * モニタ設定変更時はmonitors.xmlを毎回コピー
@@ -484,6 +474,19 @@ $ sudo chown gdm.dgm /var/lib/gdm/.config/monitors.xml
 ## NVIDIA
 ---
 
+### Xorg
+* NVIDIAグラフィックカードを表示に使わない場合（CUDA等）、Intelのみを使うように明示
+```
+$ lspci | grep VGA | grep -i intel
+$ sudo vim /etc/X11/xorg.conf.d/20-intel.conf
+Section "Device"
+   Identifier  "Intel Graphics"
+   Driver      "modesetting"
+   Option      "AccelMethod" "glamor"
+   BusID       lspciして確認する(例えば"PCI:0:2:0")
+EndSection
+```
+
 ### ドライバインストール
 * インストール後再起動
 ```
@@ -493,16 +496,182 @@ $ yay -S nvidia
 ## QEMU/KVM
 ---
 
+### ゴール
+* VM上でWindowsを実行
+* DGP、WiFi/Bluetooth、USBをPCIパススルー(vfio)
+* DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
+* ホストとVMでホームディレクトリを共有(samba)
+* マウス/キーボードを共有(evdev)
+* 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
+
+### IOMMU有効化
+* BIOSでVT-dを有効にして、カーネルパラメータを設定後、再起動
 ```
 $ sudo vim /boot/loader/entries/arch.conf
 オプション追加
 options ... intel_iommu=on iommu=pt
 ```
 
+### IOMMUグループ確認
+* IOMMUグループ確認
 ```
-$ yay -S qemu-headless ovmf
+$ for d in /sys/kernel/iommu_groups/*/devices/*; do
+    n=${d#*/iommu_groups/*}; n=${n%%/*}
+    printf 'IOMMU Group %s ' "$n"
+    lspci -nns "${d##*/}"
+done
 ```
 
+* My出力
+* GDPはIOMMUグループ1、WiFi/Bluetoothコントローラはグループ14、USBコントローラはグループ4と13に上手く分かれている
+* グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
 ```
-$ yay -S gnome-xrandr
+IOMMU Group 0 00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
+IOMMU Group 10 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
+IOMMU Group 11 00:1f.0 ISA bridge [0601]: Intel Corporation Z370 Chipset LPC/eSPI Controller [8086:a2c9]
+IOMMU Group 11 00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
+IOMMU Group 11 00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
+IOMMU Group 11 00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
+IOMMU Group 12 00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
+IOMMU Group 13 03:00.0 USB controller [0c03]: ASMedia Technology Inc. ASM2142 USB 3.1 Host Controller [1b21:2142]
+IOMMU Group 14 05:00.0 Network controller [0280]: Intel Corporation Wireless 8265 / 8275 [8086:24fd] (rev 78)
+IOMMU Group 1 00:01.0 PCI bridge [0604]: Intel Corporation Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor PCIe Controller (x16) [8086:1901] (rev 07)
+IOMMU Group 1 01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP104 [GeForce GTX 1070] [10de:1b81] (rev a1)
+IOMMU Group 1 01:00.1 Audio device [0403]: NVIDIA Corporation GP104 High Definition Audio Controller [10de:10f0] (rev a1)
+IOMMU Group 2 00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 (Desktop) [8086:3e92]
+IOMMU Group 3 00:08.0 System peripheral [0880]: Intel Corporation Xeon E3-1200 v5/v6 / E3-1500 v5 / 6th/7th Gen Core Processor Gaussian Mixture Model [8086:1911]
+IOMMU Group 4 00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
+IOMMU Group 4 00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
+IOMMU Group 5 00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
+IOMMU Group 6 00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
+IOMMU Group 7 00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #1 [8086:a290] (rev f0)
+IOMMU Group 8 00:1c.6 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #7 [8086:a296] (rev f0)
+IOMMU Group 9 00:1d.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #9 [8086:a298] (rev f0)
+```
+
+* リセット対応確認
+```
+$ for iommu_group in $(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 -type d); do
+    echo "IOMMU group $(basename "$iommu_group")"
+    for device in $(\ls -1 "$iommu_group"/devices/); do
+        if [[ -e "$iommu_group"/devices/"$device"/reset ]]; then
+            echo -n "[RESET]"
+        fi
+        echo -n $'\t';lspci -nns "$device"
+    done
+done
+```
+
+* My出力
+* 03:00.0のUSBコントローラはリセット対応しているが、00:14.0は対応しておらず、したがって問題なくパススルーできるIOMMUグループ13のUSBコントローラを使う
+```
+IOMMU group 7
+[RESET] 00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #1 [8086:a290] (rev f0)
+IOMMU group 5
+        00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
+IOMMU group 13
+[RESET] 03:00.0 USB controller [0c03]: ASMedia Technology Inc. ASM2142 USB 3.1 Host Controller [1b21:2142]
+IOMMU group 3
+[RESET] 00:08.0 System peripheral [0880]: Intel Corporation Xeon E3-1200 v5/v6 / E3-1500 v5 / 6th/7th Gen Core Processor Gaussian Mixture Model [8086:1911]
+IOMMU group 11
+        00:1f.0 ISA bridge [0601]: Intel Corporation Z370 Chipset LPC/eSPI Controller [8086:a2c9]
+        00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
+        00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
+        00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
+IOMMU group 1
+        00:01.0 PCI bridge [0604]: Intel Corporation Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor PCIe Controller (x16) [8086:1901] (rev 07)
+[RESET] 01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP104 [GeForce GTX 1070] [10de:1b81] (rev a1)
+        01:00.1 Audio device [0403]: NVIDIA Corporation GP104 High Definition Audio Controller [10de:10f0] (rev a1)
+IOMMU group 8
+[RESET] 00:1c.6 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #7 [8086:a296] (rev f0)
+IOMMU group 6
+        00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
+IOMMU group 14
+[RESET] 05:00.0 Network controller [0280]: Intel Corporation Wireless 8265 / 8275 [8086:24fd] (rev 78)
+IOMMU group 4
+        00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
+        00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
+IOMMU group 12
+[RESET] 00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
+IOMMU group 2
+[RESET] 00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 (Desktop) [8086:3e92]
+IOMMU group 10
+[RESET] 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
+IOMMU group 0
+        00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
+IOMMU group 9
+[RESET] 00:1d.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #9 [8086:a298] (rev f0)
+```
+
+### デバイス接続計画
+* USBコントローラが2つあることがポイントで、リセット対応コントローラをVMに割り当てる
+
+|コントローラ|IOMMU|IF|VM|接続デバイス|
+|-|-|-|-|-|
+|Z370 USB 3.0 xHCI|4|2.0TypeA|-|キーボード/マウス(Unifying)|
+|Z370 USB 3.0 xHCI|4|2.0TypeA|-|スマホ等|
+|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|外付けHDD|
+|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|バックパネル予備|
+|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|フロントパネル予備|
+|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|フロントパネル予備|
+|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド、カメラ等|
+|ASM2142 USB 3.1|13|3.1Gen2TypeA|Win|HMD|
+|Wireless-AC 8265|14|WiFi/Bluetooth|Win|HMD|
+|GeForce GTX 1070|1|HDMI|Win|HMD|
+|GeForce GTX 1070|1|DP|Win|モニタ|
+|UHD Graphics 630|2|DP|-|モニタ|
+|UHD Graphics 630|2|HDMI|-|AVアンプ/TV|
+
+
+### 関連パッケージインストール
+* qemu、libvirt、bridge-utilsはインストール済みになっているかも
+```
+$ yay -S qemu ovmf libvirt virt-manager samba bridge-utils gnome-xrandr
+```
+
+### VMイメージ用パーティション
+* VMイメージは/var/lib/libvirt/imagesに格納されるので、SSDパーティションを割り当てる
+
+|LV|VG|サイズ|
+|-|-|-|
+|lv_images|vg_ssd|100G|
+
+```
+$ sudo lvcreate -L サイズ VG名 -n LV名
+$ sudo lvdisplay
+$ sudo mkfs.ext4 /dev/VG名/LV名
+$ lsblk -no UUID /dev/VG名/LV名
+$ sudo vim /etc/fstab
+既存の書式にならってVMイメージ用パーティションを追加
+UUID="lsblkの結果" /var/lib/libvirt/images ext4 rw,relatime 0 2
+```
+
+* マウント
+
+```
+$ sudo mount -a
+```
+
+### グループ追加
+```
+$ sudo usermod -aG input ユーザ名
+$ sudo usermod -aG kvm ユーザ名
+$ sudo usermod -aG libvirt ユーザ名
+```
+
+### libvirt設定
+* libvirt設定
+```
+$ sudo vim /etc/libvirt/qemu.conf
+コメントアウトされている箇所の下に追加
+nvram = [
+    "/usr/share/ovmf/x64/OVMF_CODE.fd:/usr/share/ovmf/x64/OVMF_VARS.fd"
+]
+```
+
+* libvirtサービス起動
+```
+$ sudo systemctl enable libvirtd
+$ sudo systemctl start libvirtd
+$ sudo systemctl enable virtlogd.socket
 ```
