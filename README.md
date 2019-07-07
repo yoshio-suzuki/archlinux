@@ -229,7 +229,7 @@ title Arch Linux
 linux /vmlinuz-linux
 initrd /intel-ucode.img
 initrd /initramfs-linux.img
-options root=/dev/vg_ssd/lv_root rw nowatchdog
+options root=/dev/vg_ssd/lv_root rw
 ```
 
 ## Reboot
@@ -286,11 +286,10 @@ SystemMaxUse=50M
 * ログイン時にWaylandを選ばないようにする
 ```
 # pacman -S gnome
+# systemctl enable gdm
 # vi /etc/gdm/custom.conf
 アンコメント
 WaylandEnable=false
-
-# systemctl enable gdm
 ```
 
 ### ネットワーク設定変更
@@ -374,6 +373,7 @@ syntax on
 set t_ti= t_te=
 
 $ vim ~/.screenrc
+参考
 https://qiita.com/kamykn/items/9939b67e923dbb87f39c
 
 $ vim ~/.bashrc
@@ -498,11 +498,14 @@ $ yay -S nvidia
 
 ### ゴール
 * VM上でWindowsを実行
-* DGP、WiFi/Bluetooth、USBをPCIパススルー(vfio)
+* DGP、USBをPCIパススルー(vfio)
+    * WiFi/Bluetoothは、コントローラを認識するもののBTがデバイスが現れない(LinuxでもダメなのでBTドングルで対処予定)
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
+    * 手順確立するまではVM専用設定とする
 * ホストとVMでホームディレクトリを共有(samba)
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
+    * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
 
 ### IOMMU有効化
 * BIOSでVT-dを有効にして、カーネルパラメータを設定後、再起動
@@ -523,7 +526,8 @@ done
 ```
 
 * My出力
-* GDPはIOMMUグループ1、WiFi/Bluetoothコントローラはグループ14、USBコントローラはグループ4と13に上手く分かれている
+* GDPはIOMMUグループ1、WiFi/Bluetoothコントローラはグループ14、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
+* 同一グループ内にパススルーしたくないデバイスが混じっている場合、ACS上書きパッチで対応できる可能性がある
 * グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
 ```
 IOMMU Group 0 00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
@@ -605,28 +609,47 @@ IOMMU group 9
 
 ### デバイス接続計画
 * USBコントローラが2つあることがポイントで、リセット対応コントローラをVMに割り当てる
+* 何故かUSB-HUBを使うとPCがダウンしやすいが、パススルーするコントローラにはポートが2つしか無く仕方ない
 
 |コントローラ|IOMMU|IF|VM|接続デバイス|
 |-|-|-|-|-|
 |Z370 USB 3.0 xHCI|4|2.0TypeA|-|キーボード/マウス(Unifying)|
-|Z370 USB 3.0 xHCI|4|2.0TypeA|-|スマホ等|
 |Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|外付けHDD|
-|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|バックパネル予備|
-|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|フロントパネル予備|
-|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|フロントパネル予備|
-|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド、カメラ等|
+|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド、Bluetoothドングル(HMD)等|
 |ASM2142 USB 3.1|13|3.1Gen2TypeA|Win|HMD|
-|Wireless-AC 8265|14|WiFi/Bluetooth|Win|HMD|
 |GeForce GTX 1070|1|HDMI|Win|HMD|
 |GeForce GTX 1070|1|DP|Win|モニタ|
 |UHD Graphics 630|2|DP|-|モニタ|
 |UHD Graphics 630|2|HDMI|-|AVアンプ/TV|
 
+### DGP分離
+* DGP分離は動的に行いたいが、手順が確立するまでは取り敢えず静的に行う
+* IOMMUグループ確認時に表示されたDGPとそれに付随するオーディオのPCIデバイスIDを設定する
+
+```
+$ sudo vim /etc/modprobe.d/vfio.conf
+options vfio-pci ids=DGPのID,オーディオのID
+```
+
+* 起動時にロードされるように、mkinitcpio.confに設定
+
+```
+$ sudo vim /etc/mkinitcpio.conf
+他のグラフィックドライバーより前に記述すること
+MODULES=(vfio_pci vfio vfio_iommu_type1 vfio_virqfd ...)
+```
+
+* initramfs再生成(要再起動)
+
+```
+$ sudo mkinitcpio -p linux
+```
 
 ### 関連パッケージインストール
 * qemu、libvirt、bridge-utilsはインストール済みになっているかも
+
 ```
-$ yay -S qemu ovmf libvirt virt-manager samba bridge-utils gnome-xrandr
+$ yay -S qemu ovmf libvirt virt-manager samba dnsmasq ebtables dmidecode bridge-utils gnome-xrandr
 ```
 
 ### VMイメージ用パーティション
@@ -675,3 +698,152 @@ $ sudo systemctl enable libvirtd
 $ sudo systemctl start libvirtd
 $ sudo systemctl enable virtlogd.socket
 ```
+
+### VM新規追加
+
+* インストール・ドライバメディア(ISOファイル)を`/var/lib/libvirt/images/`に事前保存
+    * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード
+    * VirtIOドライバは下記のfedora公式ページからダウンロード(Direct downloads > **Latest** virtio-win iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+
+* virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施(CPUsの設定が間違えているとVM側でCPU数が合わず動作不安定になる)
+    * Local install media(ISO)
+    * Windows10のISOを選択
+    * Memory: 8192MiB、CPUs: 4(環境による)
+    * Disk: 50.0GiB(インストールアプリによる)
+    * Customize configuration before installにチェック
+    * Add Hardware
+        * Storage > Device type: CD-ROM
+        * Controller > Type: SCSI, Model: VirtIO SCSI
+    * Overview:
+        * Chipset: Q35
+        * Firmware: UEFI
+    * CPUs:
+        * Copy host CPU configurationのチェックを外す
+        * Model: host-passthrough
+        * Manually set CPU topologyをチェック
+            * Sokets: 1
+            * Cores: 4
+            * Threads: 1
+        * Current allocation: 4
+    * Boot Options:
+        * SATA CDROM1にチェック
+    * SATA Disk1:
+        * Disk bus: SCSI
+    * SATA CDROM2:
+        * Source path: ダウンロードしたVirtIOメディア
+    * NIC:
+        * Device model: virtio
+
+### Windows10インストール
+* インストール時に、SCSIドライバが無くてドライブが見つからないので、ドライバーの読み込みからインストールするドライバを選ぶ(Latest virtio-win isoではなくStableになっているとドライバ一覧が出てこない)
+* 後で不要な仮想デバイスは削除するので、ネットワークアダプタのドライバだけ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
+* Windows Updateも済ませておく
+
+### VM追加設定
+* インストールが完了したら、一旦VMをオフして、VMの追加設定をする
+    * Add Hardware
+        * PCI Host Device(IOMMUグループ確認したパススルーするデバイスを追加)
+            * DGP
+            * DGPに付随するオーディオ
+            * リセット対応USBコントローラ
+    * Boot Options:
+        * SATA CDROM1のチェックを外す
+    * Tablet: Remove
+    * Display Spice: Remove
+    * Sound: Remove
+    * Console: Remove
+    * Channel spice: Remove
+    * Video QXL: Remove
+    * Controller VirtIO Serial: Remove
+    * USB Redirector: Remove
+
+### マウス/キーボード共有
+* `/dev/input/by-id/`以下から、キーボードとマウスのIDを検索して、`cat /dev/input/by-id/デバイス名`してみて何か出力されたら当たり
+
+```
+$ ls -l /dev/input/by-id/
+$ cat /dev/input/by-id/キーボード名
+$ cat /dev/input/by-id/マウス名
+```
+
+* VM設定
+
+```
+$ sudo virsh edit VM名
+先頭行書き換え
+<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+
+末尾に追加
+  <qemu:commandline>
+    <qemu:arg value='-object'/>
+    <qemu:arg value='input-linux,id=mouse1,evdev=/dev/input/by-id/マウス名'/>
+    <qemu:arg value='-object'/>
+    <qemu:arg value='input-linux,id=kbd1,evdev=/dev/input/by-id/キーボード名,grab_all=on,repeat=on'/>
+  </qemu:commandline>
+ </domain>
+```
+
+* QEMU設定
+
+```
+$ sudo vim /etc/libvirt/qemu.conf
+コメントアウトされている箇所の下に追加
+user = "ユーザ名"
+
+コメントアウトされている箇所の下に追加
+group = "kvm"
+
+コメントアウトされている箇所の下に追加
+cgroup_device_acl = [
+    "/dev/input/by-id/キーボード名",
+    "/dev/input/by-id/マウス名",
+    "/dev/null", "/dev/full", "/dev/zero",
+    "/dev/random", "/dev/urandom",
+    "/dev/ptmx", "/dev/kvm",
+    "/dev/rtc","/dev/hpet"
+]
+```
+
+### Nvidi GPU対策
+* VM設定
+
+```
+$ sudo virsh edit VM名
+該当箇所に設定
+<features>
+  <hyperv>
+    ...
+    <vendor_id state='on' value='whatever'/>
+    ...
+  </hyperv>
+  ...
+  <kvm>
+    <hidden state='on'/>
+  </kvm>
+</features>
+```
+
+### CPU固定
+* VM設定
+
+```
+$ sudo virsh edit VM名
+該当箇所に設定
+  <vcpu placement='static'>4</vcpu>
+  <cputune>
+    <vcpupin vcpu='0' cpuset='0'/>
+    <vcpupin vcpu='1' cpuset='1'/>
+    <vcpupin vcpu='2' cpuset='2'/>
+    <vcpupin vcpu='3' cpuset='3'/>
+  </cputune>
+
+```
+
+### VM起動
+* libvirtd再起動
+
+```
+$ sudo systemctl restart libvirtd
+```
+
+* Ctrl左右両押しで切り替わる
