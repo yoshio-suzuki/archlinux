@@ -499,7 +499,6 @@ $ yay -S nvidia
 ### ゴール
 * VM上でWindowsを実行
 * DGP、USBをPCIパススルー(vfio)
-    * WiFi/Bluetoothは、コントローラを認識するもののBTがデバイスが現れない(LinuxでもダメなのでBTドングルで対処予定)
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
     * 手順確立するまではVM専用設定とする
 * ホストとVMでホームディレクトリを共有(samba)
@@ -526,7 +525,7 @@ done
 ```
 
 * My出力
-* GDPはIOMMUグループ1、WiFi/Bluetoothコントローラはグループ14、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
+* GDPはIOMMUグループ1、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
 * 同一グループ内にパススルーしたくないデバイスが混じっている場合、ACS上書きパッチで対応できる可能性がある
 * グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
 ```
@@ -622,6 +621,14 @@ IOMMU group 9
 |UHD Graphics 630|2|DP|-|モニタ|
 |UHD Graphics 630|2|HDMI|-|AVアンプ/TV|
 
+### Bluescreen at boot since Windows 10 1803
+
+```
+$ echo 1 | sudo sh -c "cat > /sys/module/kvm/parameters/ignore_msrs"
+$ sudo vim /etc/modprobe.d/kvm.conf
+options kvm ignore_msrs=1
+```
+
 ### DGP分離
 * DGP分離は動的に行いたいが、手順が確立するまでは取り敢えず静的に行う
 * IOMMUグループ確認時に表示されたDGPとそれに付随するオーディオのPCIデバイスIDを設定する
@@ -705,7 +712,7 @@ $ sudo systemctl enable virtlogd.socket
     * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード
     * VirtIOドライバは下記のfedora公式ページからダウンロード(Direct downloads > **Latest** virtio-win iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
 
-* virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施(CPUsの設定が間違えているとVM側でCPU数が合わず動作不安定になる)
+* virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施
     * Local install media(ISO)
     * Windows10のISOを選択
     * Memory: 8192MiB、CPUs: 4(環境による)
@@ -731,13 +738,11 @@ $ sudo systemctl enable virtlogd.socket
         * Disk bus: SCSI
     * SATA CDROM2:
         * Source path: ダウンロードしたVirtIOメディア
-    * NIC:
-        * Device model: virtio
 
 ### Windows10インストール
 * インストール時に、SCSIドライバが無くてドライブが見つからないので、ドライバーの読み込みからインストールするドライバを選ぶ(Latest virtio-win isoではなくStableになっているとドライバ一覧が出てこない)
-* 後で不要な仮想デバイスは削除するので、ネットワークアダプタのドライバだけ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
-* Windows Updateも済ませておく
+* Windows Updateも済ませておく(何度か必要)
+* NVIDIAドライバをダウンロードしておく
 
 ### VM追加設定
 * インストールが完了したら、一旦VMをオフして、VMの追加設定をする
@@ -748,12 +753,49 @@ $ sudo systemctl enable virtlogd.socket
             * リセット対応USBコントローラ
     * Boot Options:
         * SATA CDROM1のチェックを外す
+    * NIC:
+        * Device model: virtio
+
+### Nvidi GPU対策
+
+```
+$ sudo virsh edit VM名
+先頭行書き換え
+<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+
+該当箇所に設定
+<features>
+  <hyperv>
+    ...
+    <vendor_id state='on' value='whatever'/>
+    ...
+  </hyperv>
+  ...
+  <kvm>
+    <hidden state='on'/>
+  </kvm>
+</features>
+```
+
+### Windows10ドライバ追加
+* libvirtd再起動後、VM起動
+
+```
+$ sudo systemctl restart libvirtd
+```
+
+* ダウンロード済みのNVIDIAドライバをインストールする
+
+* ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
+
+### 仮想デバイス削除
+* ここまでVMが正常に機能していることが確認できたら、一旦VMをオフして、VMの不要デバイスを削除する
     * Tablet: Remove
-    * Display Spice: Remove
     * Sound: Remove
-    * Console: Remove
+    * Display Spice: Remove
     * Channel spice: Remove
     * Video QXL: Remove
+    * Serial: Remove
     * Controller VirtIO Serial: Remove
     * USB Redirector: Remove
 
@@ -804,46 +846,8 @@ cgroup_device_acl = [
 ]
 ```
 
-### Nvidi GPU対策
-* VM設定
-
-```
-$ sudo virsh edit VM名
-該当箇所に設定
-<features>
-  <hyperv>
-    ...
-    <vendor_id state='on' value='whatever'/>
-    ...
-  </hyperv>
-  ...
-  <kvm>
-    <hidden state='on'/>
-  </kvm>
-</features>
-```
-
-### CPU固定
-* VM設定
-
-```
-$ sudo virsh edit VM名
-該当箇所に設定
-  <vcpu placement='static'>4</vcpu>
-  <cputune>
-    <vcpupin vcpu='0' cpuset='0'/>
-    <vcpupin vcpu='1' cpuset='1'/>
-    <vcpupin vcpu='2' cpuset='2'/>
-    <vcpupin vcpu='3' cpuset='3'/>
-  </cputune>
-
-```
-
-### VM起動
-* libvirtd再起動
-
-```
-$ sudo systemctl restart libvirtd
-```
-
-* Ctrl左右両押しで切り替わる
+### Windows10カスタマイズ
+* 一旦ここでバックアップを取っておいても良いかも
+* libvirtd再起動後、VM起動
+* Ctrl左右両押しでモニタが切り替わる
+* NVIDIAコントロールパネルから、PhysX設定をDGPに明示的に設定(nvlddmkmエラー対策)
