@@ -506,10 +506,31 @@ $ yay -S nvidia
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
     * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
 
+### LTS版Kernelに変更
+* LTS版Kernelインストール
+
+```
+$ yay -S kernel-lts
+```
+
+* 設定
+```
+# vi /boot/loader/loader.conf
+変更
+default arch-lts
+
+$ sudo vim /boot/loader/entries/arch-lts.conf 
+title Arch Linux - LTS Kernel
+linux /vmlinuz-linux-lts
+initrd /intel-ucode.img
+initrd /initramfs-linux-lts.img
+options root=/dev/vg_ssd/lv_root rw i915.enable_fbc=1 i915.fastboot=1
+```
+
 ### IOMMU有効化
 * BIOSでVT-dを有効にして、カーネルパラメータを設定後、再起動
 ```
-$ sudo vim /boot/loader/entries/arch.conf
+$ sudo vim /boot/loader/entries/arch-lts.conf
 オプション追加
 options ... intel_iommu=on iommu=pt
 ```
@@ -649,7 +670,7 @@ MODULES=(vfio_pci vfio vfio_iommu_type1 vfio_virqfd ...)
 * initramfs再生成(要再起動)
 
 ```
-$ sudo mkinitcpio -p linux
+$ sudo mkinitcpio -p linux-lts
 ```
 
 ### 関連パッケージインストール
@@ -709,8 +730,13 @@ $ sudo systemctl enable virtlogd.socket
 ### VM新規追加
 
 * インストール・ドライバメディア(ISOファイル)を`/var/lib/libvirt/images/`に事前保存
-    * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード
-    * VirtIOドライバは下記のfedora公式ページからダウンロード(Direct downloads > **Latest** virtio-win iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+    * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード(Win10_1809Oct_v2_Japanese_x64.iso)
+    * VirtIOドライバは下記のfedora公式ページからダウンロード(virtio-win-0.1.141.iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+    * NVIDIAドライバは公式ページからダウンロードしたものをISO化(nvidia.iso)する
+
+```
+$ mkisofs -o nvidia.iso NVIDIAドライバファイル
+```
 
 * virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施
     * Local install media(ISO)
@@ -729,44 +755,42 @@ $ sudo systemctl enable virtlogd.socket
         * Model: host-passthrough
         * Manually set CPU topologyをチェック
             * Sokets: 1
-            * Cores: 4
-            * Threads: 1
-        * Current allocation: 4
+            * Cores: 4(環境による)
+            * Threads: 1(環境による)
+        * Current allocation: 4(環境による)
     * Boot Options:
         * SATA CDROM1にチェック
     * SATA Disk1:
         * Disk bus: SCSI
     * SATA CDROM2:
-        * Source path: ダウンロードしたVirtIOメディア
+        * Source path: ダウンロードしたVirtIOメディア(virtio-win-0.1.141.iso)
+    * NIC:
+        * Device model: virtio
 
 ### Windows10インストール
-* インストール時に、SCSIドライバが無くてドライブが見つからないので、ドライバーの読み込みからインストールするドライバを選ぶ(Latest virtio-win isoではなくStableになっているとドライバ一覧が出てこない)
-* Windows Updateも済ませておく(何度か必要)
-* NVIDIAドライバをダウンロードしておく
+* Windows Updateを無効にするために、Pro版をインストールする
+* インストール時に、SCSIドライバが無くてドライブが見つからないので、ドライバの読み込みからインストールするドライバを選ぶ(ドライバメディアの/vioscsi/w10/amd64フォルダにある)
+* インストール中はVirtIOドライバがないためネットワーク接続できない
+* インストール後は、ネットワーク接続する前に、Windows Updateを無効にする
+    * gpedit.msc実行 > コンピューターの構成 > 管理用テンプレート > Windowsコンポーネント > Windows Update > 自動更新を構成する > 有効 > 2-ダウンロードと自動インストールを通知 > OK
 
 ### VM追加設定
-* インストールが完了したら、一旦VMをオフして、VMの追加設定をする
+* 一旦VMをオフして、VMの追加設定をする
     * Add Hardware
         * PCI Host Device(IOMMUグループ確認したパススルーするデバイスを追加)
             * DGP
             * DGPに付随するオーディオ
             * リセット対応USBコントローラ
-    * Boot Options:
-        * SATA CDROM1のチェックを外す
-    * NIC:
-        * Device model: virtio
+    * SATA CDROM2:
+        * Source path: ISO化したNVIDIAドライバ(nvidia.iso)
 
-### Nvidi GPU対策
+### NVIDIA GPU対策
 
 ```
 $ sudo virsh edit VM名
-先頭行書き換え
-<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
-
-該当箇所に設定
+該当箇所に追加
 <features>
   <hyperv>
-    ...
     <vendor_id state='on' value='whatever'/>
     ...
   </hyperv>
@@ -777,25 +801,47 @@ $ sudo virsh edit VM名
 </features>
 ```
 
-### Windows10ドライバ追加
-* libvirtd再起動後、VM起動
+### QEMU 4.0: Unable to load graphics drivers/BSOD after driver install using Q35
 
 ```
-$ sudo systemctl restart libvirtd
+$ sudo virsh edit VM名
+該当箇所に追加
+<features>
+  ...
+  <ioapic driver='kvm'/>
+</features>
 ```
 
-* ダウンロード済みのNVIDIAドライバをインストールする
+### CPU pinning
+* 効果不明
 
+```
+<vcpu placement='static'>4</vcpu>
+該当箇所に追加
+<iothreads>1</iothreads>
+<cputune>
+    <vcpupin vcpu='0' cpuset='2'/>
+    <vcpupin vcpu='1' cpuset='3'/>
+    <vcpupin vcpu='2' cpuset='4'/>
+    <vcpupin vcpu='3' cpuset='5'/>
+    <emulatorpin cpuset='0,1'/>
+    <iothreadpin iothread='1' cpuset='0,1'/>
+</cputune>
+```
+
+### ドライバ追加
+* 再びVMを起動して、CD-ROMのNVIDIAドライバをインストールする
+* NVIDIAコントロールパネルから、PhysX設定をDGPに明示的に設定(nvlddmkmエラー対策)
 * ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
 
 ### 仮想デバイス削除
 * ここまでVMが正常に機能していることが確認できたら、一旦VMをオフして、VMの不要デバイスを削除する
     * Tablet: Remove
-    * Sound: Remove
     * Display Spice: Remove
+    * Sound: Remove
+    * Serial: Remove
     * Channel spice: Remove
     * Video QXL: Remove
-    * Serial: Remove
     * Controller VirtIO Serial: Remove
     * USB Redirector: Remove
 
@@ -850,4 +896,4 @@ cgroup_device_acl = [
 * 一旦ここでバックアップを取っておいても良いかも
 * libvirtd再起動後、VM起動
 * Ctrl左右両押しでモニタが切り替わる
-* NVIDIAコントロールパネルから、PhysX設定をDGPに明示的に設定(nvlddmkmエラー対策)
+* Windows軽量化
