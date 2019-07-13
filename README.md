@@ -501,14 +501,14 @@ $ yay -S nvidia
 * DGP、USBをPCIパススルー(vfio)
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
     * 手順確立するまではVM専用設定とする
-* ホストとVMでホームディレクトリを共有(samba)
+* ホストとVMでディレクトリ共有(samba)
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
     * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
 
 ### LTS版Kernelに変更
 * LTS版Kernelインストール
-
+* LTS版でないとVMが正常動作しなかった
 ```
 $ yay -S kernel-lts
 ```
@@ -525,6 +525,11 @@ linux /vmlinuz-linux-lts
 initrd /intel-ucode.img
 initrd /initramfs-linux-lts.img
 options root=/dev/vg_ssd/lv_root rw i915.enable_fbc=1 i915.fastboot=1
+```
+
+### LTS版NVIDIAドライバインストール
+```
+$ yay -S nvidia-lts
 ```
 
 ### IOMMU有効化
@@ -549,6 +554,7 @@ done
 * GDPはIOMMUグループ1、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
 * 同一グループ内にパススルーしたくないデバイスが混じっている場合、ACS上書きパッチで対応できる可能性がある
 * グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
+* グループ14のWiFi/BluetoothコントローラはパススルーしてもBluetoothデバイスが表示されなかった(他のコントローラのパススルーも必要なのか？)
 ```
 IOMMU Group 0 00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
 IOMMU Group 10 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
@@ -643,24 +649,21 @@ IOMMU group 9
 |UHD Graphics 630|2|HDMI|-|AVアンプ/TV|
 
 ### Bluescreen at boot since Windows 10 1803
-
 ```
-$ echo 1 | sudo sh -c "cat > /sys/module/kvm/parameters/ignore_msrs"
 $ sudo vim /etc/modprobe.d/kvm.conf
 options kvm ignore_msrs=1
 ```
 
 ### DGP分離
 * DGP分離は動的に行いたいが、手順が確立するまでは取り敢えず静的に行う
+* DGPをunbindすると固まってしまうので動的にできない(kernelのバグか?)
 * IOMMUグループ確認時に表示されたDGPとそれに付随するオーディオのPCIデバイスIDを設定する
-
 ```
 $ sudo vim /etc/modprobe.d/vfio.conf
 options vfio-pci ids=DGPのID,オーディオのID
 ```
 
 * 起動時にロードされるように、mkinitcpio.confに設定
-
 ```
 $ sudo vim /etc/mkinitcpio.conf
 他のグラフィックドライバーより前に記述すること
@@ -668,14 +671,12 @@ MODULES=(vfio_pci vfio vfio_iommu_type1 vfio_virqfd ...)
 ```
 
 * initramfs再生成(要再起動)
-
 ```
 $ sudo mkinitcpio -p linux-lts
 ```
 
 ### 関連パッケージインストール
 * qemu、libvirt、bridge-utilsはインストール済みになっているかも
-
 ```
 $ yay -S qemu ovmf libvirt virt-manager samba dnsmasq ebtables dmidecode bridge-utils gnome-xrandr
 ```
@@ -698,7 +699,6 @@ UUID="lsblkの結果" /var/lib/libvirt/images ext4 rw,relatime 0 2
 ```
 
 * マウント
-
 ```
 $ sudo mount -a
 ```
@@ -731,18 +731,22 @@ $ sudo systemctl enable virtlogd.socket
 
 * インストール・ドライバメディア(ISOファイル)を`/var/lib/libvirt/images/`に事前保存
     * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード(Win10_1809Oct_v2_Japanese_x64.iso)
-    * VirtIOドライバは下記のfedora公式ページからダウンロード(virtio-win-0.1.141.iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+        * バージョンが新しいと問題が起こりやすいかも
+        * 自動的にWindows Updateされないよう、ネットワーク未接続で作業する
+    * VirtIOドライバは下記のfedora公式ページからStable版をダウンロード(virtio-win-0.1.141.iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+        * Latest版を使う必要はない
     * NVIDIAドライバは公式ページからダウンロードしたものをISO化(nvidia.iso)する
-
+        * 自動的にドライバインストールされないよう、ネットワーク未接続で作業するので、ドライバは事前ダウンロードしておく
 ```
 $ mkisofs -o nvidia.iso NVIDIAドライバファイル
 ```
 
-* virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施
+* virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施("Manually set CPU topology"は「VM only uses one core」対策)
+* 設定値は環境による
     * Local install media(ISO)
     * Windows10のISOを選択
-    * Memory: 8192MiB、CPUs: 4(環境による)
-    * Disk: 50.0GiB(インストールアプリによる)
+    * Memory: 8192MiB、CPUs: 4
+    * Disk: 50.0GiB
     * Customize configuration before installにチェック
     * Add Hardware
         * Storage > Device type: CD-ROM
@@ -755,9 +759,9 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
         * Model: host-passthrough
         * Manually set CPU topologyをチェック
             * Sokets: 1
-            * Cores: 4(環境による)
-            * Threads: 1(環境による)
-        * Current allocation: 4(環境による)
+            * Cores: 4
+            * Threads: 1
+        * Current allocation: 4
     * Boot Options:
         * SATA CDROM1にチェック
     * SATA Disk1:
@@ -784,8 +788,7 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
     * SATA CDROM2:
         * Source path: ISO化したNVIDIAドライバ(nvidia.iso)
 
-### NVIDIA GPU対策
-
+### "Error 43: Driver failed to load" on Nvidia GPUs passed to Windows VMs
 ```
 $ sudo virsh edit VM名
 該当箇所に追加
@@ -802,7 +805,6 @@ $ sudo virsh edit VM名
 ```
 
 ### QEMU 4.0: Unable to load graphics drivers/BSOD after driver install using Q35
-
 ```
 $ sudo virsh edit VM名
 該当箇所に追加
@@ -813,8 +815,7 @@ $ sudo virsh edit VM名
 ```
 
 ### CPU pinning
-* 効果不明
-
+* 設定値は環境による
 ```
 <vcpu placement='static'>4</vcpu>
 該当箇所に追加
@@ -829,10 +830,9 @@ $ sudo virsh edit VM名
 </cputune>
 ```
 
-### ドライバ追加
+### NVIDIAドライバ追加
 * 再びVMを起動して、CD-ROMのNVIDIAドライバをインストールする
 * NVIDIAコントロールパネルから、PhysX設定をDGPに明示的に設定(nvlddmkmエラー対策)
-* ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
 
 ### 仮想デバイス削除
 * ここまでVMが正常に機能していることが確認できたら、一旦VMをオフして、VMの不要デバイスを削除する
@@ -847,7 +847,6 @@ $ sudo virsh edit VM名
 
 ### マウス/キーボード共有
 * `/dev/input/by-id/`以下から、キーボードとマウスのIDを検索して、`cat /dev/input/by-id/デバイス名`してみて何か出力されたら当たり
-
 ```
 $ ls -l /dev/input/by-id/
 $ cat /dev/input/by-id/キーボード名
@@ -855,7 +854,6 @@ $ cat /dev/input/by-id/マウス名
 ```
 
 * VM設定
-
 ```
 $ sudo virsh edit VM名
 先頭行書き換え
@@ -872,7 +870,6 @@ $ sudo virsh edit VM名
 ```
 
 * QEMU設定
-
 ```
 $ sudo vim /etc/libvirt/qemu.conf
 コメントアウトされている箇所の下に追加
@@ -891,9 +888,55 @@ cgroup_device_acl = [
     "/dev/rtc","/dev/hpet"
 ]
 ```
+### フォルダ共有
+* 設定ファイル作成
+```
+$ sudo vim /etc/samba/smb.con
+[global]
+   dos charset = CP932 
+   unix charset = UTF-8 
+   server multi channel support = yes
+   socket options = IPTOS_THROUGHPUT SO_KEEPALIVE
+   deadtime = 30
+   use sendfile = Yes
+   write cache size = 262144
+   min receivefile size = 16384
+   aio read size = 16384
+   aio write size = 16384
+   load printers = no
+   printcap name = /dev/null
+   disable spoolss = yes
+   workgroup = WORKGROUP
+   server string = Samba Server
+   server role = standalone server
+   log file = /var/log/samba/%m.log
+   max log size = 50
+   dns proxy = no 
+   client min protocol = SMB3
+   client max protocol = SMB3
+
+[homes]
+   comment = Home Directories
+   browseable = no
+   valid users = %S
+   read only = no
+```
+
+* サービス起動
+```
+$ sudo systemctl enable smb
+$ sudo systemctl start smb
+```
+
+* sambaユーザ作成
+```
+$ sudo smbpasswd -a ユーザ名
+```
 
 ### Windows10カスタマイズ
 * 一旦ここでバックアップを取っておいても良いかも
 * libvirtd再起動後、VM起動
 * Ctrl左右両押しでモニタが切り替わる
 * Windows軽量化
+* ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
+* samba共有フォルダのネットワークドライブ割り当て
