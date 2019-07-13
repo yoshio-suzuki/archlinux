@@ -499,6 +499,7 @@ $ yay -S nvidia
 ### ゴール
 * VM上でWindowsを実行
 * DGP、USBをPCIパススルー(vfio)
+    * WiFi/Bluetoothのパススルーは機能せず
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
     * 手順確立するまではVM専用設定とする
 * ホストとVMでディレクトリ共有(samba)
@@ -940,3 +941,5 @@ $ sudo smbpasswd -a ユーザ名
 * Windows軽量化
 * ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
 * samba共有フォルダのネットワークドライブ割り当て
+    * Steamの設定で、ゲームのインストール先フォルダにネットワークドライブ追加して、デフォルトとする(ディスクIO性能が下がるかもだが、localhost上のsambaなので、NASよりマシだろう)
+        * FFXIII-2はネットワークドライブでは起動しない(他のゲームでも発生するかも)
