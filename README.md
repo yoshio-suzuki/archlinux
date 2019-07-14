@@ -502,7 +502,9 @@ $ yay -S nvidia
     * WiFi/Bluetoothのパススルーは機能せず
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
     * 手順確立するまではVM専用設定とする
-* ホストとVMでディレクトリ共有(samba)
+* ホストとVMでディレクトリ共有(samba/iscsi)
+    * ホスト-VM間でファイルのやり取りはほぼなく、普段sambaは停止しててもよいかも
+    * 写真データを共有したいが、LUMIX用のPHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、iSCSIで対応できないか(ホスト側からはReadOnlyマウント)
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
     * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
@@ -679,29 +681,20 @@ $ sudo mkinitcpio -p linux-lts
 ### 関連パッケージインストール
 * qemu、libvirt、bridge-utilsはインストール済みになっているかも
 ```
-$ yay -S qemu ovmf libvirt virt-manager samba dnsmasq ebtables dmidecode bridge-utils gnome-xrandr
+$ yay -S qemu ovmf libvirt virt-manager dnsmasq ebtables dmidecode bridge-utils gnome-xrandr
 ```
 
-### VMイメージ用パーティション
-* VMイメージは/var/lib/libvirt/imagesに格納されるので、SSDパーティションを割り当てる
+### VM用ディスクイメージ
+* ディスクイメージはqcow2ではなくLVMパーティションを使い、OSはSSD、データはHDDに割り当てる
 
 |LV|VG|サイズ|
 |-|-|-|
-|lv_images|vg_ssd|100G|
+|lv_win10os|vg_ssd|100G|
+|lv_win10data|vg_hdd|100G|
 
 ```
 $ sudo lvcreate -L サイズ VG名 -n LV名
 $ sudo lvdisplay
-$ sudo mkfs.ext4 /dev/VG名/LV名
-$ lsblk -no UUID /dev/VG名/LV名
-$ sudo vim /etc/fstab
-既存の書式にならってVMイメージ用パーティションを追加
-UUID="lsblkの結果" /var/lib/libvirt/images ext4 rw,relatime 0 2
-```
-
-* マウント
-```
-$ sudo mount -a
 ```
 
 ### グループ追加
@@ -747,9 +740,10 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
     * Local install media(ISO)
     * Windows10のISOを選択
     * Memory: 8192MiB、CPUs: 4
-    * Disk: 50.0GiB
+    * Storage: /dev/vg_ssd/lv_win10os
     * Customize configuration before installにチェック
     * Add Hardware
+        * Storage > /var/vg_hdd/lv_win10data, Bus Type: VirtIO
         * Storage > Device type: CD-ROM
         * Controller > Type: SCSI, Model: VirtIO SCSI
     * Overview:
@@ -774,8 +768,10 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
 
 ### Windows10インストール
 * Windows Updateを無効にするために、Pro版をインストールする
-* インストール時に、SCSIドライバが無くてドライブが見つからないので、ドライバの読み込みからインストールするドライバを選ぶ(ドライバメディアの/vioscsi/w10/amd64フォルダにある)
-* インストール中はVirtIOドライバがないためネットワーク接続できない
+* インストール時に、OS用ストレージのSCSIドライバが無くてドライブが見つからないので、ドライバの読み込みからインストールするドライバを選ぶ(ドライバメディアの/vioscsi/w10/amd64フォルダにある)
+    * データ用ストレージはWindowsのセットアップが全て完了して、必要になってからドライバ追加(ドライバメディアの/viostor/w10/amd64フォルダにある)して利用すればよい
+    * Bus TypeはSCSIよりVirtIOのほうがIO性能が1割ほど高かった(CrystalDiskMark)ので、OS用ストレージもVirtIOにすれば良かったかもしれない(SSDなのでそこまで気にしない)
+* インストール中はNIC用VirtIOドライバがないためネットワーク接続できない
 * インストール後は、ネットワーク接続する前に、Windows Updateを無効にする
     * gpedit.msc実行 > コンピューターの構成 > 管理用テンプレート > Windowsコンポーネント > Windows Update > 自動更新を構成する > 有効 > 2-ダウンロードと自動インストールを通知 > OK
 
@@ -786,7 +782,7 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
             * DGP
             * DGPに付随するオーディオ
             * リセット対応USBコントローラ
-    * SATA CDROM2:
+    * SATA CDROM1:
         * Source path: ISO化したNVIDIAドライバ(nvidia.iso)
 
 ### "Error 43: Driver failed to load" on Nvidia GPUs passed to Windows VMs
@@ -889,7 +885,12 @@ cgroup_device_acl = [
     "/dev/rtc","/dev/hpet"
 ]
 ```
-### フォルダ共有
+### Sambaフォルダ共有
+* パッケージインストール
+```
+$ yay -S samba
+```
+
 * 設定ファイル作成
 ```
 $ sudo vim /etc/samba/smb.con
@@ -913,8 +914,6 @@ $ sudo vim /etc/samba/smb.con
    log file = /var/log/samba/%m.log
    max log size = 50
    dns proxy = no 
-   client min protocol = SMB3
-   client max protocol = SMB3
 
 [homes]
    comment = Home Directories
@@ -924,8 +923,8 @@ $ sudo vim /etc/samba/smb.con
 ```
 
 * サービス起動
+    * 常時利用しないので、enableにはしない
 ```
-$ sudo systemctl enable smb
 $ sudo systemctl start smb
 ```
 
@@ -939,7 +938,23 @@ $ sudo smbpasswd -a ユーザ名
 * libvirtd再起動後、VM起動
 * Ctrl左右両押しでモニタが切り替わる
 * Windows軽量化
+* データ用ストレージ(VirtIO)のドライバ更新して(ドライバメディアのRed Hat VirtIO SCSI controller)、NTFSフォーマットして利用可能にする
+    * 主にSteamゲームインストール先だが、ディスクIO性能によりロードが時間がかかりすぎるのであれば、OS用ストレージ(SSD)にフォルダ移動する
 * ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
-* samba共有フォルダのネットワークドライブ割り当て
-    * Steamの設定で、ゲームのインストール先フォルダにネットワークドライブ追加して、デフォルトとする(ディスクIO性能が下がるかもだが、localhost上のsambaなので、NASよりマシだろう)
-        * FFXIII-2はネットワークドライブでは起動しない(他のゲームでも発生するかも)
+    * samba共有フォルダの接続確認(利用するときは事前に`systemctl start smb`しておくこと)
+
+### iSCSI
+* ターゲット/イニシエータインストール
+```
+$ yay -S python-rtslib-fb open-iscsi
+```
+
+* ターゲット用LV作成
+
+|LV|VG|サイズ|
+|-|-|-|
+|lv_photo|vg_hdd|50G|
+
+```
+$ sudo lvcreate -L サイズ VG名 -n LV名
+```
