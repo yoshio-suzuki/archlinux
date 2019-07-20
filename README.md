@@ -499,12 +499,11 @@ $ yay -S nvidia
 ### ゴール
 * VM上でWindowsを実行
 * DGP、USBをPCIパススルー(vfio)
-    * WiFi/Bluetoothのパススルーは機能せず
+    * BluetoothはPCIではなくUSBホストデバイスをパススルーする
 * DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
     * 手順確立するまではVM専用設定とする
 * ホストとVMでディレクトリ共有(samba/iscsi)
-    * ホスト-VM間でファイルのやり取りはほぼなく、普段sambaは停止しててもよいかも
-    * 写真データを共有したいが、LUMIX用のPHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、iSCSIで対応できないか(ホスト側からはReadOnlyマウント)
+    * PHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、iSCSIで対応(ホスト側からはReadOnlyマウントして同時書込のないようにする)
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
     * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
@@ -557,7 +556,6 @@ done
 * GDPはIOMMUグループ1、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
 * 同一グループ内にパススルーしたくないデバイスが混じっている場合、ACS上書きパッチで対応できる可能性がある
 * グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
-* グループ14のWiFi/BluetoothコントローラはパススルーしてもBluetoothデバイスが表示されなかった(他のコントローラのパススルーも必要なのか？)
 ```
 IOMMU Group 0 00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
 IOMMU Group 10 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
@@ -644,7 +642,7 @@ IOMMU group 9
 |-|-|-|-|-|
 |Z370 USB 3.0 xHCI|4|2.0TypeA|-|キーボード/マウス(Unifying)|
 |Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|外付けHDD|
-|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド、Bluetoothドングル(HMD)等|
+|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド等|
 |ASM2142 USB 3.1|13|3.1Gen2TypeA|Win|HMD|
 |GeForce GTX 1070|1|HDMI|Win|HMD|
 |GeForce GTX 1070|1|DP|Win|モニタ|
@@ -659,7 +657,7 @@ options kvm ignore_msrs=1
 
 ### DGP分離
 * DGP分離は動的に行いたいが、手順が確立するまでは取り敢えず静的に行う
-* DGPをunbindすると固まってしまうので動的にできない(kernelのバグか?)
+    * DGPをunbindすると固まってしまうので動的にできない(kernelのバグか?)
 * IOMMUグループ確認時に表示されたDGPとそれに付随するオーディオのPCIデバイスIDを設定する
 ```
 $ sudo vim /etc/modprobe.d/vfio.conf
@@ -725,12 +723,12 @@ $ sudo systemctl enable virtlogd.socket
 
 * インストール・ドライバメディア(ISOファイル)を`/var/lib/libvirt/images/`に事前保存
     * Windows10のディスクイメージ(ISOファイル)はMicrosoft公式ページからダウンロード(Win10_1809Oct_v2_Japanese_x64.iso)
-        * バージョンが新しいと問題が起こりやすいかも
+        * バージョンが新しい(1903)と問題が起こりやすいかも
         * 自動的にWindows Updateされないよう、ネットワーク未接続で作業する
     * VirtIOドライバは下記のfedora公式ページからStable版をダウンロード(virtio-win-0.1.141.iso): https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
         * Latest版を使う必要はない
     * NVIDIAドライバは公式ページからダウンロードしたものをISO化(nvidia.iso)する
-        * 自動的にドライバインストールされないよう、ネットワーク未接続で作業するので、ドライバは事前ダウンロードしておく
+        * 自動的にドライバインストールされないようネットワーク未接続で作業するので、ドライバは事前ダウンロードしておく
 ```
 $ mkisofs -o nvidia.iso NVIDIAドライバファイル
 ```
@@ -776,12 +774,19 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
     * gpedit.msc実行 > コンピューターの構成 > 管理用テンプレート > Windowsコンポーネント > Windows Update > 自動更新を構成する > 有効 > 2-ダウンロードと自動インストールを通知 > OK
 
 ### VM追加設定
+* Bluetoothデバイス確認
+```
+$ lsusb
+```
+
 * 一旦VMをオフして、VMの追加設定をする
     * Add Hardware
         * PCI Host Device(IOMMUグループ確認したパススルーするデバイスを追加)
             * DGP
             * DGPに付随するオーディオ
             * リセット対応USBコントローラ
+        * USB Host Device
+            * Bluetoothデバイス
     * SATA CDROM1:
         * Source path: ISO化したNVIDIAドライバ(nvidia.iso)
 
@@ -885,6 +890,49 @@ cgroup_device_acl = [
     "/dev/rtc","/dev/hpet"
 ]
 ```
+
+### VM起動時モニタ自動切り替え
+* 既存の環境変数DISPLAYとXAUTHORITYを確認
+```
+$ env
+```
+
+* フック作成
+```
+$ sudo mkdir /etc/libvirt/hooks
+$ sudo vim /etc/libvirt/hooks/qemu
+#!/bin/bash
+if [[ $1 == "win10" ]] && [[ $2 == "started" ]]; then
+        export DISPLAY=上記環境変数に合わせる
+        export XAUTHORITY=上記環境変数に合わせる
+        export display=$(xrandr | grep -E " connected (primary )?[1-9]+" | sed -e "s/\([A-Z0-9]\+\) connected.*/\1/")
+        DISPLAY=:1 xrandr --output $display --off && \
+        sleep 5 && \
+        DISPLAY=:1 xrandr --output $display --auto
+fi
+```
+
+* 実行権限付与
+```
+$ sudo chmod 755 /etc/libvirt/hooks/qemu
+```
+
+* スケール設定
+    * xrandrで復帰したときに、Settings > Devices > Displays > Scaleで設定した倍率が戻ってしまうので、gsettingsで設定しておく
+```
+$ gsettings set org.gnome.settings-daemon.plugins.xsettings overrides "[{'Gdk/WindowScalingFactor', <2>}]"
+$ gsettings set org.gnome.desktop.interface scaling-factor 2
+```
+
+### Windows10カスタマイズ
+* 一旦ここでバックアップを取っておいても良いかも
+* libvirtd再起動後、VM起動
+* Ctrl左右両押しでマウス/キーボードが切り替わる
+* Windows軽量化
+* データ用ストレージ(VirtIO)のドライバ更新して(ドライバメディアのRed Hat VirtIO SCSI controller)、NTFSフォーマットして利用可能にする
+    * 主にSteamゲームインストール先だが、ディスクIO性能によりロードが時間がかかりすぎるのであれば、OS用ストレージ(SSD)にフォルダ移動する
+* ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
+
 ### Sambaフォルダ共有
 * パッケージインストール
 ```
@@ -892,6 +940,7 @@ $ yay -S samba
 ```
 
 * 設定ファイル作成
+    * `read only = no`のコメントアウトは必要に応じて切り替える
 ```
 $ sudo vim /etc/samba/smb.con
 [global]
@@ -919,13 +968,13 @@ $ sudo vim /etc/samba/smb.con
    comment = Home Directories
    browseable = no
    valid users = %S
-   read only = no
+   #read only = no
 ```
 
 * サービス起動
-    * 常時利用しないので、enableにはしない
 ```
 $ sudo systemctl start smb
+$ sudo systemctl enable smb
 ```
 
 * sambaユーザ作成
@@ -933,28 +982,77 @@ $ sudo systemctl start smb
 $ sudo smbpasswd -a ユーザ名
 ```
 
-### Windows10カスタマイズ
-* 一旦ここでバックアップを取っておいても良いかも
-* libvirtd再起動後、VM起動
-* Ctrl左右両押しでモニタが切り替わる
-* Windows軽量化
-* データ用ストレージ(VirtIO)のドライバ更新して(ドライバメディアのRed Hat VirtIO SCSI controller)、NTFSフォーマットして利用可能にする
-    * 主にSteamゲームインストール先だが、ディスクIO性能によりロードが時間がかかりすぎるのであれば、OS用ストレージ(SSD)にフォルダ移動する
-* ネットワークアダプタ(virtio)のドライバ更新する(ドライバメディアを参照すればVirtIO Ethernet Adapterが出てくる)
-    * samba共有フォルダの接続確認(利用するときは事前に`systemctl start smb`しておくこと)
+* VM側でネットワークドライブ作成
+```
+\\ホスト側のIPアドレス\ユーザ名
+```
 
 ### iSCSI
 * ターゲット/イニシエータインストール
 ```
-$ yay -S python-rtslib-fb open-iscsi
+$ yay -S targetcli-fb python-rtslib-fb python-configshell-fb open-iscsi
 ```
 
 * ターゲット用LV作成
 
 |LV|VG|サイズ|
 |-|-|-|
-|lv_photo|vg_hdd|50G|
+|lv_iscsi|vg_hdd|50G|
 
 ```
 $ sudo lvcreate -L サイズ VG名 -n LV名
+```
+
+* ターゲット設定
+```
+$ sudo systemctl start target
+$ sudo systemctl enable target
+$ sudo targetcli
+> cd backstores/block
+> create md_block0 /dev/vg_hdd/lv_iscsi
+> cd /iscsi
+> create
+> cd
+<iqn>/tpg1を選ぶ
+> cd luns
+> create /backstores/block/md_block0
+> cd ../acls
+> create <ホスト側イニシエータiqn(/etc/iscsi/initiatorname.iscsi)>
+> create <VM側イニシエータiqn(iSCSIイニシエータプロパティの構成タブ)>
+> cd ..
+> set attribute authentication=0
+> cd /
+> saveconfig
+```
+
+* VM側イニシエータ設定
+    * iSCSIイニシエータサービスを自動開始に設定
+    * iSCSIイニシエータ > プロパティ > 探索タブ > ポータルの探索 > IPアドレス：ホスト側IP > ターゲットタブ > 接続
+    * ディスクの管理より、NTFSフォーマットする
+
+* ホスト側イニシエータ設定
+```
+$ sudo vim /etc/iscsi/iscsid.conf
+該当箇所を変更
+node.startup = automatic
+$ sudo systemctl enable iscsid
+$ sudo systemctl start iscsid
+$ sudo iscsiadm -m discovery -p 127.0.0.1 -t st
+$ sudo iscsiadm -m node -L all
+$ sudo iscsiadm -m session -P 3
+「Attached scsi disk sdx State: running」からどのデバイス(/dev/sdx)にアタッチされたか確認
+$ sudo blkid
+対象のUUIDを確認(TYPE="ntfs" PARTLABEL="Basic data partition")
+$ sudo vim /etc/fstab
+他にならって設定
+UUID=上記UUID   マウントポイント    ntfs            ro,noatime,dmask=022,fmask=133,uid=ユーザID,gid=グループID,windows_names,x-systemd.device-timeout=5,_netdev,noauto,x-systemd.automount   0 2
+
+$ sudo iscsiadm -m node -U all
+```
+
+* iSCSIはファイル共有のための仕組みではないので、ホストとVMで同時に利用しないこと
+    * ホスト側で書込むときは、VMが停止していことを確認し、一時的に書込み可にする
+```
+$ sudo umount マウントポイント
+$ sudo mount マウントポイント
 ```
