@@ -506,7 +506,7 @@ $ yay -S nvidia
     * PHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、iSCSIで対応(ホスト側からはReadOnlyマウントして同時書込のないようにする)
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
-    * MyモニタがDDC/CIに対応していないので、無理であればOSDで切り替える
+    * MyモニタがDDC/CIに対応していないので、xrandrで対応
 
 ### LTS版Kernelに変更
 * LTS版Kernelインストール
@@ -891,33 +891,79 @@ cgroup_device_acl = [
 ]
 ```
 
-### VM起動時モニタ自動切り替え
+### モニタ切替
+* 切替はアクティブなディスプレイを一時的にOFFすることで、他方に切替える仕組み
 * 既存の環境変数DISPLAYとXAUTHORITYを確認
 ```
 $ env
 ```
 
-* フック作成
+* VM起動時のフック作成
 ```
 $ sudo mkdir /etc/libvirt/hooks
 $ sudo vim /etc/libvirt/hooks/qemu
 #!/bin/bash
-if [[ $1 == "win10" ]] && [[ $2 == "started" ]]; then
+
+display_switch () {
         export DISPLAY=上記環境変数に合わせる
         export XAUTHORITY=上記環境変数に合わせる
-        export display=$(xrandr | grep -E " connected (primary )?[1-9]+" | sed -e "s/\([A-Z0-9]\+\) connected.*/\1/")
-        DISPLAY=:1 xrandr --output $display --off && \
+        display=$(xrandr | grep -E " connected (primary )?[1-9]+" | sed -e "s/\([A-Z0-9]\+\) connected.*/\1/")
+        xrandr --output $display --off && \
         sleep 5 && \
-        DISPLAY=:1 xrandr --output $display --auto
+        xrandr --output $display --auto
+}
+
+if [[ $1 == "win10" ]]; then
+    if [[ $2 == "started" ]]; then
+        display_switch
+        nohup /etc/libvirt/hooks/display_switch.py 0<&- &>/dev/null &
+    elif [[ $2 == "stopped" ]]; then
+        pkill -f display_switch.py
+    fi
+elif [[ $1 == "display_switch" ]]; then
+    display_switch
 fi
+```
+* VM側の切替機構
+    * 下記BATファイルを作成して、AutoHotkeyアプリでLCtrl&RCtrlのホットキーでBAT起動できるようにする
+        * どうも裏で終了せずに残ってしまっているような
+```
+powershell (Add-Type '[DllImport(\"user32.dll\")]^public static extern int SendMessage(int hWnd, int hMsg, int wParam, int lParam);' -Name a -Pas)::SendMessage(-1,0x0112,0xF170,2)
+```
+
+* ホスト側の切替機構
+```
+$ yay -S python-evdev
+$ sudo vim /etc/libvirt/hooks/display_switch.py 
+#!/usr/bin/env python
+import asyncio
+from evdev import InputDevice
+
+dev = InputDevice('/dev/input/by-id/usb-Logitech_USB_Receiver-if02-event-kbd')
+
+async def helper(dev):
+    both = 0
+    async for ev in dev.async_read_loop():
+        if ev.type == 1 and (ev.code == 29 or ev.code == 97):
+            if ev.value == 1:
+                both += 1
+                if both == 2:
+                    process = await asyncio.create_subprocess_exec('/etc/libvirt/hooks/qemu', *('display_switch',))
+            elif ev.value == 0:
+                both -= 1
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(helper(dev))
 ```
 
 * 実行権限付与
 ```
 $ sudo chmod 755 /etc/libvirt/hooks/qemu
+$ sudo chmod 755 /etc/libvirt/hooks/display_switch.py
 ```
 
 * スケール設定
+    * スケールが100%のままなら設定不要
     * xrandrで復帰したときに、Settings > Devices > Displays > Scaleで設定した倍率が戻ってしまうので、gsettingsで設定しておく
 ```
 $ gsettings set org.gnome.settings-daemon.plugins.xsettings overrides "[{'Gdk/WindowScalingFactor', <2>}]"
