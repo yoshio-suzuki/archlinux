@@ -893,6 +893,7 @@ cgroup_device_acl = [
 
 ### モニタ切替
 * 切替はアクティブなディスプレイを一時的にOFFすることで、他方に切替える仕組み
+    * `ddcutil`が利用できれば、もっとスマートな切替が可能
 * 既存の環境変数DISPLAYとXAUTHORITYを確認
 ```
 $ env
@@ -923,12 +924,6 @@ if [[ $1 == "win10" ]]; then
 elif [[ $1 == "display_switch" ]]; then
     display_switch
 fi
-```
-* VM側の切替機構
-    * 下記BATファイルを作成して、AutoHotkeyアプリでLCtrl&RCtrlのホットキーでBAT起動できるようにする
-        * どうも裏で終了せずに残ってしまっているような
-```
-powershell (Add-Type '[DllImport(\"user32.dll\")]^public static extern int SendMessage(int hWnd, int hMsg, int wParam, int lParam);' -Name a -Pas)::SendMessage(-1,0x0112,0xF170,2)
 ```
 
 * ホスト側の切替機構
@@ -968,6 +963,23 @@ $ sudo chmod 755 /etc/libvirt/hooks/display_switch.py
 ```
 $ gsettings set org.gnome.settings-daemon.plugins.xsettings overrides "[{'Gdk/WindowScalingFactor', <2>}]"
 $ gsettings set org.gnome.desktop.interface scaling-factor 2
+```
+
+* VM側の切替機構
+    * AutoHotkeyアプリでLCtrl&RCtrlのホットキーでBAT起動できるようにする
+    * `display_switch.ahk`をスタートアップに登録する
+```
+> Notepad.exe %USERPROFILE%\bin\display_switch.bat
+powershell (Add-Type '[DllImport(\"user32.dll\")]^public static extern int SendMessage(int hWnd, int hMsg, int wParam, int lParam);' -Name a -Pas)::SendMessage(-1,0x0112,0xF170,2)
+powershell Start-Sleep -s 5
+powershell (Add-Type '[DllImport(\"user32.dll\")]^public static extern void mouse_event(Int32 dwFlags, Int32 dx, Int32 dy, Int32 dwData, UIntPtr dwExtraInfo);' -Name a -Pas)::mouse_event(1,0,1,0,[UIntPtr]::Zero)
+
+> Notepad.exe %USERPROFILE%\bin\display_switch.ahk 
+#SingleInstance Ignore
+LCtrl & RCtrl::
+RCtrl & LCtrl::
+Run %USERPROFILE%\bin\display_switch.bat
+return
 ```
 
 ### Windows10カスタマイズ
