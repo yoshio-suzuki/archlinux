@@ -967,7 +967,7 @@ $ gsettings set org.gnome.desktop.interface scaling-factor 2
 
 * VM側の切替機構
     * AutoHotkeyアプリでLCtrl&RCtrlのホットキーでBAT起動できるようにする
-    * `display_switch.ahk`をスタートアップに登録する
+    * `display_switch.ahk`をスタートアップ/タスクスケジューラで自動起動させる
 ```
 > Notepad.exe %USERPROFILE%\bin\display_switch.bat
 powershell (Add-Type '[DllImport(\"user32.dll\")]^public static extern int SendMessage(int hWnd, int hMsg, int wParam, int lParam);' -Name a -Pas)::SendMessage(-1,0x0112,0xF170,2)
@@ -1108,9 +1108,4 @@ UUID=上記UUID   マウントポイント    ntfs            ro,noatime,dmask=0
 $ sudo iscsiadm -m node -U all
 ```
 
-* iSCSIはファイル共有のための仕組みではないので、ホストとVMで同時に利用しないこと
-    * ホスト側で書込むときは、VMが停止していことを確認し、一時的に書込み可にする
-```
-$ sudo umount マウントポイント
-$ sudo mount マウントポイント
-```
+* 現時点でiSCSIの自動ログインができていないため、/etc/fstabによる自動マウントもできない。そのため/etc/fstabの該当箇所はコメントアウトしておく
