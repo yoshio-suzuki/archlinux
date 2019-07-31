@@ -816,6 +816,12 @@ $ sudo virsh edit VM名
 </features>
 ```
 
+### Slowed down audio pumped through HDMI on the video card
+* DGPとオーディオデバイスのMSI(Message Signaled-Based Interrupts)を有効にする
+    1. Win10側で、デバイスマネージャー > 表示 > リソース(種類別) > 割り込み要求(IRQ) > (PCI)0x...(xx)の対象デバイス(xxがマイナス値なら既にMSI) > 右クリック > プロパティ > 詳細 > デバイスインスタンスパス確認
+    2. regedit > HKEY_LOCAL_MACHINE > SYSTEM > CurrentControlSet > Enum > デバイスインスタンスパス > Device Parameters > Interrupt Management > MessageSignaledInterruptPropertiesキー追加(既存の場合もある) > MSISupported値(DWORD)に1をセット
+    3. Win10を再起動し、デバイスマネージャーから対象デバイスがマイナス値になっていることを確認する
+
 ### CPU pinning
 * 設定値は環境による
 ```
