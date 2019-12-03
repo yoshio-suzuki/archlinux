@@ -92,7 +92,6 @@
 |lv_home|vg_hdd|500G|
 |lv_var|vg_hdd|20G|
 |lv_tmp|vg_hdd|10G|
-|lv_opt|vg_hdd|1G|
 
 ```
 # lvcreate -L サイズ VG名 -n LV名
@@ -114,7 +113,6 @@
 # mount /dev/vg_hdd/lv_home /mnt/home
 # mount /dev/vg_hdd/lv_var /mnt/var
 # mount /dev/vg_hdd/lv_tmp /mnt/tmp
-# mount /dev/vg_hdd/lv_opt /mnt/opt
 ```
 
 ## Installation
@@ -129,10 +127,10 @@
 
 ```
 
-### Install the base packages
+### Install essential packages
 * base-devも追加
 ```
-# pacstrap /mnt base base-dev
+# pacstrap /mnt base linux linux-firmware base-dev
 ```
 
 ## Configure the system
@@ -222,7 +220,6 @@ HOOKS=(base udev autodetect modconf block lvm2 filesystems keyboard keymap fsck)
 default arch
 timeout 2
 console-mode max
-editor no
 
 # vi /boot/loader/entries/arch.conf
 title Arch Linux
@@ -280,6 +277,23 @@ Color
 vi /etc/systemd/journald.conf
 アンコメントしてサイズ指定
 SystemMaxUse=50M
+```
+
+* ミラーリスト
+```
+# pacman -S reflector
+# reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist
+# vi /etc/pacman.d/hooks/mirrorupgrade.hook
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = pacman-mirrorlist
+
+[Action]
+Description = Updating pacman-mirrorlist with reflector and removing pacnew...
+When = PostTransaction
+Depends = reflector
+Exec = /bin/sh -c "reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist;  rm -f /etc/pacman.d/mirrorlist.pacnew"
 ```
 
 ### gnomeインストール
@@ -1050,68 +1064,3 @@ $ sudo smbpasswd -a ユーザ名
 ```
 \\ホスト側のIPアドレス\ユーザ名
 ```
-
-### iSCSI
-* ターゲット/イニシエータインストール
-```
-$ yay -S targetcli-fb python-rtslib-fb python-configshell-fb open-iscsi
-```
-
-* ターゲット用LV作成
-
-|LV|VG|サイズ|
-|-|-|-|
-|lv_iscsi|vg_hdd|50G|
-
-```
-$ sudo lvcreate -L サイズ VG名 -n LV名
-```
-
-* ターゲット設定
-```
-$ sudo systemctl start target
-$ sudo systemctl enable target
-$ sudo targetcli
-> cd backstores/block
-> create md_block0 /dev/vg_hdd/lv_iscsi
-> cd /iscsi
-> create
-> cd
-<iqn>/tpg1を選ぶ
-> cd luns
-> create /backstores/block/md_block0
-> cd ../acls
-> create <ホスト側イニシエータiqn(/etc/iscsi/initiatorname.iscsi)>
-> create <VM側イニシエータiqn(iSCSIイニシエータプロパティの構成タブ)>
-> cd ..
-> set attribute authentication=0
-> cd /
-> saveconfig
-```
-
-* VM側イニシエータ設定
-    * iSCSIイニシエータサービスを自動開始に設定
-    * iSCSIイニシエータ > プロパティ > 探索タブ > ポータルの探索 > IPアドレス：ホスト側IP > ターゲットタブ > 接続
-    * ディスクの管理より、NTFSフォーマットする
-
-* ホスト側イニシエータ設定
-```
-$ sudo vim /etc/iscsi/iscsid.conf
-該当箇所を変更
-node.startup = automatic
-$ sudo systemctl enable iscsid
-$ sudo systemctl start iscsid
-$ sudo iscsiadm -m discovery -p 127.0.0.1 -t st
-$ sudo iscsiadm -m node -L all
-$ sudo iscsiadm -m session -P 3
-「Attached scsi disk sdx State: running」からどのデバイス(/dev/sdx)にアタッチされたか確認
-$ sudo blkid
-対象のUUIDを確認(TYPE="ntfs" PARTLABEL="Basic data partition")
-$ sudo vim /etc/fstab
-他にならって設定
-UUID=上記UUID   マウントポイント    ntfs            ro,noatime,dmask=022,fmask=133,uid=ユーザID,gid=グループID,windows_names,x-systemd.device-timeout=5,_netdev,noauto,x-systemd.automount   0 2
-
-$ sudo iscsiadm -m node -U all
-```
-
-* 現時点でiSCSIの自動ログインができていないため、/etc/fstabによる自動マウントもできない。そのため/etc/fstabの該当箇所はコメントアウトしておく
