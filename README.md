@@ -2,14 +2,16 @@
 
 * 参考：[Arch Linux](https://www.archlinux.org/)
 * Myマシン構成：
-    * M/B: MSi Z370I GAMING PRO CARBON AC
+    * M/B: ASRock B365M Phantom Gaming 4
     * CPU: i5-8400
     * MEM: 16GB
     * SSD: 360GB
     * HDD: 1TB
     * DGP: GTX1070
+    * USB: OWL-PCEXU3E4
 
 ## Pre-installation
+* 2019/12/11現在
 ---
 
 ### Verify signature
@@ -48,7 +50,7 @@
 
 ### Partition the disks
 * SSD(/dev/sda)とHDD(/dev/sdb)の2台がありLVMを使う例
-    * HDDにデータ(/home、/var、/tmp、/opt等)を割り当て、起動に必要な領域はSSDに割り当てる
+    * HDDにデータ(/home、/var、/tmp等)を割り当て、起動に必要な領域はSSDに割り当てる
     * スワップパーティションは作らないが、必要ならスワップファイルを使えば良い
     * ハイバーネート用のスワップも作らない(サスペンドを使えばよいし、SSDなら早いのでハイバーネート不要)
 * パーティション設定
@@ -108,7 +110,7 @@
 ### Mount the file systems
 ```
 # mount /dev/vg_ssd/lv_root /mnt
-# mkdir /mnt/{boot,home,var,tmp,opt}
+# mkdir /mnt/{boot,home,var,tmp}
 # mount /dev/sda1 /mnt/boot
 # mount /dev/vg_hdd/lv_home /mnt/home
 # mount /dev/vg_hdd/lv_var /mnt/var
@@ -130,7 +132,7 @@
 ### Install essential packages
 * base-devも追加
 ```
-# pacstrap /mnt base linux linux-firmware base-dev
+# pacstrap /mnt base linux-lts linux-firmware base-devel lvm2 vi man-db man-pages texinfo
 ```
 
 ## Configure the system
@@ -147,7 +149,6 @@
 ```
 
 ### Time zone
-* `ln`ではなく`timedatectl set-timezone Asia/Tokyo`ではダメか？
 ```
 # ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
 # hwclock --systohc
@@ -223,9 +224,9 @@ console-mode max
 
 # vi /boot/loader/entries/arch.conf
 title Arch Linux
-linux /vmlinuz-linux
+linux /vmlinuz-linux-lts
 initrd /intel-ucode.img
-initrd /initramfs-linux.img
+initrd /initramfs-linux-lts.img
 options root=/dev/vg_ssd/lv_root rw
 ```
 
@@ -316,16 +317,6 @@ WaylandEnable=false
 # ping www.yahoo.co.jp
 ```
 
-### AURヘルパー
-* yay追加
-```
-# pacman -S git
-# cd /tmp
-# git clone https://aur.archlinux.org/yay.git
-# cd yay
-# makepkg -si
-```
-
 ### ユーザ設定
 * グループをusersにしたいのでlogin.defsを修正する
 ```
@@ -352,6 +343,16 @@ USERGROUPS_ENAB no
 * 以降の作業は一般ユーザで行う
 ```
 # su - ユーザ名
+```
+
+### AURヘルパー
+* yay追加
+```
+$ sudo pacman -S git
+$ cd /tmp
+$ git clone https://aur.archlinux.org/yay.git
+$ cd yay
+$ makepkg -si
 ```
 
 ### systemd-boot更新フック追加
@@ -504,7 +505,7 @@ EndSection
 ### ドライバインストール
 * インストール後再起動
 ```
-$ yay -S nvidia
+$ yay -S nvidia-lts
 ```
 
 ## QEMU/KVM
@@ -514,44 +515,22 @@ $ yay -S nvidia
 * VM上でWindowsを実行
 * DGP、USBをPCIパススルー(vfio)
     * BluetoothはPCIではなくUSBホストデバイスをパススルーする
-* DGPを普段はホスト側で利用して、VM起動時にはVM側に動的に割り当て(unbind/bind)
-    * 手順確立するまではVM専用設定とする
-* ホストとVMでディレクトリ共有(samba/iscsi)
-    * PHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、iSCSIで対応(ホスト側からはReadOnlyマウントして同時書込のないようにする)
+* DGPを普段はホスト側では無効（vfio）にして、利用時に動的割り当て
+```
+rmmod vfio-pci
+modprobe nvidia
+```
+* ホストとVMでディレクトリ共有(samba/ntfs-3g)
+    * PHOTOfunSTUDIOがネットワークドライブへの保存に対応していないため、LVを通常のストレージとして認識させ、ホスト側からはReadOnlyでntfs-3gマウントして同時書込のないようにする（offsetを指定したり調整が必要）
 * マウス/キーボードを共有(evdev)
 * 1つのモニタでマウス/キーボードに連動して入力ソース切り替え(ddcutil/xrandr)
     * MyモニタがDDC/CIに対応していないので、xrandrで対応
 
-### LTS版Kernelに変更
-* LTS版Kernelインストール
-* LTS版でないとVMが正常動作しなかった
-```
-$ yay -S kernel-lts
-```
-
-* 設定
-```
-# vi /boot/loader/loader.conf
-変更
-default arch-lts
-
-$ sudo vim /boot/loader/entries/arch-lts.conf 
-title Arch Linux - LTS Kernel
-linux /vmlinuz-linux-lts
-initrd /intel-ucode.img
-initrd /initramfs-linux-lts.img
-options root=/dev/vg_ssd/lv_root rw i915.enable_fbc=1 i915.fastboot=1
-```
-
-### LTS版NVIDIAドライバインストール
-```
-$ yay -S nvidia-lts
-```
-
+### Kernel設定
 ### IOMMU有効化
 * BIOSでVT-dを有効にして、カーネルパラメータを設定後、再起動
 ```
-$ sudo vim /boot/loader/entries/arch-lts.conf
+$ sudo vim /boot/loader/entries/arch.conf
 オプション追加
 options ... intel_iommu=on iommu=pt
 ```
@@ -567,31 +546,26 @@ done
 ```
 
 * My出力
-* GDPはIOMMUグループ1、USBコントローラはグループ4と13と、グループ内はパススルー対象デバイスだけにまとまっている
+* GDPはIOMMUグループ1、USBコントローラはグループ3（チップセット）と9（拡張I/F）に分かれている
 * 同一グループ内にパススルーしたくないデバイスが混じっている場合、ACS上書きパッチで対応できる可能性がある
 * グループ1のPCIブリッジは、vfioにバインドしたりVMに追加しないこと
 ```
 IOMMU Group 0 00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
-IOMMU Group 10 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
-IOMMU Group 11 00:1f.0 ISA bridge [0601]: Intel Corporation Z370 Chipset LPC/eSPI Controller [8086:a2c9]
-IOMMU Group 11 00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
-IOMMU Group 11 00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
-IOMMU Group 11 00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
-IOMMU Group 12 00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
-IOMMU Group 13 03:00.0 USB controller [0c03]: ASMedia Technology Inc. ASM2142 USB 3.1 Host Controller [1b21:2142]
-IOMMU Group 14 05:00.0 Network controller [0280]: Intel Corporation Wireless 8265 / 8275 [8086:24fd] (rev 78)
 IOMMU Group 1 00:01.0 PCI bridge [0604]: Intel Corporation Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor PCIe Controller (x16) [8086:1901] (rev 07)
 IOMMU Group 1 01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP104 [GeForce GTX 1070] [10de:1b81] (rev a1)
 IOMMU Group 1 01:00.1 Audio device [0403]: NVIDIA Corporation GP104 High Definition Audio Controller [10de:10f0] (rev a1)
 IOMMU Group 2 00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 (Desktop) [8086:3e92]
-IOMMU Group 3 00:08.0 System peripheral [0880]: Intel Corporation Xeon E3-1200 v5/v6 / E3-1500 v5 / 6th/7th Gen Core Processor Gaussian Mixture Model [8086:1911]
-IOMMU Group 4 00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
-IOMMU Group 4 00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
-IOMMU Group 5 00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
-IOMMU Group 6 00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
-IOMMU Group 7 00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #1 [8086:a290] (rev f0)
-IOMMU Group 8 00:1c.6 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #7 [8086:a296] (rev f0)
-IOMMU Group 9 00:1d.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #9 [8086:a298] (rev f0)
+IOMMU Group 3 00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
+IOMMU Group 3 00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
+IOMMU Group 4 00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
+IOMMU Group 5 00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
+IOMMU Group 6 00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #5 [8086:a294] (rev f0)
+IOMMU Group 7 00:1f.0 ISA bridge [0601]: Intel Corporation Device [8086:a2cc]
+IOMMU Group 7 00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
+IOMMU Group 7 00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
+IOMMU Group 7 00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
+IOMMU Group 8 00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
+IOMMU Group 9 02:00.0 USB controller [0c03]: Renesas Technology Corp. uPD720201 USB 3.0 Host Controller [1912:0014] (rev 03)
 ```
 
 * リセット対応確認
@@ -608,56 +582,45 @@ done
 ```
 
 * My出力
-* 03:00.0のUSBコントローラはリセット対応しているが、00:14.0は対応しておらず、したがって問題なくパススルーできるIOMMUグループ13のUSBコントローラを使う
+* 02:00.0のUSBコントローラはリセット対応しているが、00:14.0は対応しておらず、したがって問題なくパススルーできるIOMMUグループ9のUSBコントローラを使う
 ```
 IOMMU group 7
-[RESET] 00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #1 [8086:a290] (rev f0)
+	00:1f.0 ISA bridge [0601]: Intel Corporation Device [8086:a2cc]
+	00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
+	00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
+	00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
 IOMMU group 5
-        00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
-IOMMU group 13
-[RESET] 03:00.0 USB controller [0c03]: ASMedia Technology Inc. ASM2142 USB 3.1 Host Controller [1b21:2142]
+	00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
 IOMMU group 3
-[RESET] 00:08.0 System peripheral [0880]: Intel Corporation Xeon E3-1200 v5/v6 / E3-1500 v5 / 6th/7th Gen Core Processor Gaussian Mixture Model [8086:1911]
-IOMMU group 11
-        00:1f.0 ISA bridge [0601]: Intel Corporation Z370 Chipset LPC/eSPI Controller [8086:a2c9]
-        00:1f.2 Memory controller [0580]: Intel Corporation 200 Series/Z370 Chipset Family Power Management Controller [8086:a2a1]
-        00:1f.3 Audio device [0403]: Intel Corporation 200 Series PCH HD Audio [8086:a2f0]
-        00:1f.4 SMBus [0c05]: Intel Corporation 200 Series/Z370 Chipset Family SMBus Controller [8086:a2a3]
+	00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
+	00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
 IOMMU group 1
-        00:01.0 PCI bridge [0604]: Intel Corporation Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor PCIe Controller (x16) [8086:1901] (rev 07)
-[RESET] 01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP104 [GeForce GTX 1070] [10de:1b81] (rev a1)
-        01:00.1 Audio device [0403]: NVIDIA Corporation GP104 High Definition Audio Controller [10de:10f0] (rev a1)
+	00:01.0 PCI bridge [0604]: Intel Corporation Xeon E3-1200 v5/E3-1500 v5/6th Gen Core Processor PCIe Controller (x16) [8086:1901] (rev 07)
+[RESET]	01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP104 [GeForce GTX 1070] [10de:1b81] (rev a1)
+	01:00.1 Audio device [0403]: NVIDIA Corporation GP104 High Definition Audio Controller [10de:10f0] (rev a1)
 IOMMU group 8
-[RESET] 00:1c.6 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #7 [8086:a296] (rev f0)
+[RESET]	00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
 IOMMU group 6
-        00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [AHCI mode] [8086:a282]
-IOMMU group 14
-[RESET] 05:00.0 Network controller [0280]: Intel Corporation Wireless 8265 / 8275 [8086:24fd] (rev 78)
+[RESET]	00:1c.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #5 [8086:a294] (rev f0)
 IOMMU group 4
-        00:14.0 USB controller [0c03]: Intel Corporation 200 Series/Z370 Chipset Family USB 3.0 xHCI Controller [8086:a2af]
-        00:14.2 Signal processing controller [1180]: Intel Corporation 200 Series PCH Thermal Subsystem [8086:a2b1]
-IOMMU group 12
-[RESET] 00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection (2) I219-V [8086:15b8]
+	00:16.0 Communication controller [0780]: Intel Corporation 200 Series PCH CSME HECI #1 [8086:a2ba]
 IOMMU group 2
-[RESET] 00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 (Desktop) [8086:3e92]
-IOMMU group 10
-[RESET] 00:1d.3 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #12 [8086:a29b] (rev f0)
+[RESET]	00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics 630 (Desktop) [8086:3e92]
 IOMMU group 0
-        00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
+	00:00.0 Host bridge [0600]: Intel Corporation 8th Gen Core Processor Host Bridge/DRAM Registers [8086:3ec2] (rev 07)
 IOMMU group 9
-[RESET] 00:1d.0 PCI bridge [0604]: Intel Corporation 200 Series PCH PCI Express Root Port #9 [8086:a298] (rev f0)
+[RESET]	02:00.0 USB controller [0c03]: Renesas Technology Corp. uPD720201 USB 3.0 Host Controller [1912:0014] (rev 03)
 ```
 
 ### デバイス接続計画
 * USBコントローラが2つあることがポイントで、リセット対応コントローラをVMに割り当てる
-* 何故かUSB-HUBを使うとPCがダウンしやすいが、パススルーするコントローラにはポートが2つしか無く仕方ない
 
 |コントローラ|IOMMU|IF|VM|接続デバイス|
 |-|-|-|-|-|
-|Z370 USB 3.0 xHCI|4|2.0TypeA|-|キーボード/マウス(Unifying)|
-|Z370 USB 3.0 xHCI|4|3.1Gen1TypeA|-|外付けHDD|
-|ASM2142 USB 3.1|13|3.1Gen2TypeC|Win|HUB経由でゲームパッド等|
-|ASM2142 USB 3.1|13|3.1Gen2TypeA|Win|HMD|
+|Intel USB 3.0 xHCI|3|2.0TypeA|-|キーボード/マウス(Unifying)|
+|upd720201 USB 3.0|9|3.0TypeA|Win|ゲームパッド|
+|upd720201 USB 3.0|9|3.0TypeA|Win|カメラ|
+|upd720201 USB 3.0|9|3.0TypeA|Win|HMD|
 |GeForce GTX 1070|1|HDMI|Win|HMD|
 |GeForce GTX 1070|1|DP|Win|モニタ|
 |UHD Graphics 630|2|DP|-|モニタ|
@@ -670,8 +633,6 @@ options kvm ignore_msrs=1
 ```
 
 ### DGP分離
-* DGP分離は動的に行いたいが、手順が確立するまでは取り敢えず静的に行う
-    * DGPをunbindすると固まってしまうので動的にできない(kernelのバグか?)
 * IOMMUグループ確認時に表示されたDGPとそれに付随するオーディオのPCIデバイスIDを設定する
 ```
 $ sudo vim /etc/modprobe.d/vfio.conf
@@ -703,6 +664,7 @@ $ yay -S qemu ovmf libvirt virt-manager dnsmasq ebtables dmidecode bridge-utils 
 |-|-|-|
 |lv_win10os|vg_ssd|100G|
 |lv_win10data|vg_hdd|100G|
+|lv_photo|vg_hdd|100G|
 
 ```
 $ sudo lvcreate -L サイズ VG名 -n LV名
@@ -751,11 +713,12 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
 * 設定値は環境による
     * Local install media(ISO)
     * Windows10のISOを選択
-    * Memory: 8192MiB、CPUs: 4
+    * Memory: 8192MiB、CPUs: 5
     * Storage: /dev/vg_ssd/lv_win10os
     * Customize configuration before installにチェック
     * Add Hardware
         * Storage > /var/vg_hdd/lv_win10data, Bus Type: VirtIO
+        * Storage > /var/vg_hdd/lv_photo, Bus Type: VirtIO
         * Storage > Device type: CD-ROM
         * Controller > Type: SCSI, Model: VirtIO SCSI
     * Overview:
@@ -766,9 +729,9 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
         * Model: host-passthrough
         * Manually set CPU topologyをチェック
             * Sokets: 1
-            * Cores: 4
+            * Cores: 5
             * Threads: 1
-        * Current allocation: 4
+        * Current allocation: 5
     * Boot Options:
         * SATA CDROM1にチェック
     * SATA Disk1:
@@ -839,14 +802,15 @@ $ sudo virsh edit VM名
 ### CPU pinning
 * 設定値は環境による
 ```
-<vcpu placement='static'>4</vcpu>
+<vcpu placement='static'>5</vcpu>
 該当箇所に追加
 <iothreads>1</iothreads>
 <cputune>
-    <vcpupin vcpu='0' cpuset='2'/>
-    <vcpupin vcpu='1' cpuset='3'/>
-    <vcpupin vcpu='2' cpuset='4'/>
-    <vcpupin vcpu='3' cpuset='5'/>
+    <vcpupin vcpu='0' cpuset='1'/>
+    <vcpupin vcpu='1' cpuset='2'/>
+    <vcpupin vcpu='2' cpuset='3'/>
+    <vcpupin vcpu='3' cpuset='4'/>
+    <vcpupin vcpu='4' cpuset='5'/>
     <emulatorpin cpuset='0,1'/>
     <iothreadpin iothread='1' cpuset='0,1'/>
 </cputune>
@@ -1063,4 +1027,11 @@ $ sudo smbpasswd -a ユーザ名
 * VM側でネットワークドライブ作成
 ```
 \\ホスト側のIPアドレス\ユーザ名
+```
+
+### NTFSマウント
+```
+# /dev/mapper/vg_hdd-lv_photo
+* UUIDは使えないのでデバイスを直接指定する
+/dev/mapper/vg_hdd-lv_photo			/photo   	ntfs-3g      	ro,noatime,dmask=022,fmask=133,uid=1000,gid=985,windows_names,loop,offset=16777216	0 2
 ```
