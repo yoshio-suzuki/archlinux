@@ -1024,8 +1024,8 @@ $ sudo smbpasswd -a ユーザ名
 ```
 
 ### NTFSマウント
+* UUIDは使えないのでデバイスを直接指定する
 ```
 # /dev/mapper/vg_hdd-lv_photo
-* UUIDは使えないのでデバイスを直接指定する
 /dev/mapper/vg_hdd-lv_photo			/photo   	ntfs-3g      	ro,noatime,dmask=022,fmask=133,uid=1000,gid=985,windows_names,loop,offset=16777216	0 2
 ```
