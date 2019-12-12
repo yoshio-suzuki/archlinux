@@ -53,6 +53,8 @@
     * HDDにデータ(/home、/var、/tmp等)を割り当て、起動に必要な領域はSSDに割り当てる
     * スワップパーティションは作らないが、必要ならスワップファイルを使えば良い
     * ハイバーネート用のスワップも作らない(サスペンドを使えばよいし、SSDなら早いのでハイバーネート不要)
+    * /optはchromeがインスールされるのでHDDに割り当てると遅い（つまり/optは作らず/に含める）
+    * /varはログが格納されるので/と分けるとシステム終了時に引っかかることがあるかも（/var/lib/libvirtや/var/lib/docker等を個別に分けたほうがよい）
 * パーティション設定
 
 |デバイス|パーティション|サイズ|タイプ|
@@ -130,7 +132,7 @@
 ```
 
 ### Install essential packages
-* base-devも追加
+* VM利用時の安定性を考慮して、linuxカーネルはlts版を使う
 ```
 # pacstrap /mnt base linux-lts linux-firmware base-devel lvm2 vi man-db man-pages texinfo
 ```
@@ -280,23 +282,6 @@ vi /etc/systemd/journald.conf
 SystemMaxUse=50M
 ```
 
-* ミラーリスト
-```
-# pacman -S reflector
-# reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist
-# vi /etc/pacman.d/hooks/mirrorupgrade.hook
-[Trigger]
-Operation = Upgrade
-Type = Package
-Target = pacman-mirrorlist
-
-[Action]
-Description = Updating pacman-mirrorlist with reflector and removing pacnew...
-When = PostTransaction
-Depends = reflector
-Exec = /bin/sh -c "reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist;  rm -f /etc/pacman.d/mirrorlist.pacnew"
-```
-
 ### gnomeインストール
 * ログイン時にWaylandを選ばないようにする
 ```
@@ -373,12 +358,29 @@ $ yay -S gnome-tweaks
 Tweeksを起動 > Keyboard&Mouse > Additional Layout Options > Caps Lock behavior > Caps Lock is also a Ctrl
 ```
 
+* 日本語
+    * 途中ログアウトか再起動しないと、設定メニューが有効にならない
+```
+$ yay -S otf-ipafont noto-fonts-cjk noto-fonts-emoji
+$ yay -S fcitx-mozc fcitx-gtk3 fcitx-configtool
+Fcitx Config > Input Method > Add input method > Only Show Current Language:アンチェック > Keybod - JapaneseとMozcを追加(Keyboard - English(US)は削除)
+$ sudo vim /etc/environment
+追加
+GTK_IM_MODULE=fcitx
+XMODIFIERS=@im=fcitx
+```
+
 * ターミナル透明化
 ```
 $ yay -S gnome-terminal-transparency
 既存のgnome-terminalを削除・置き換えする
 設定はお好みで(テーマDark、透明化、パレットSolarized)
 ```
+
+* Google Chrome
+```
+$ yay -S google-chrome
+``` 
 
 * コンソール
 ```
@@ -401,7 +403,9 @@ alias vi='vim'
 * 状態取得
 ```
 $ yay -S hdparm smartmontools lm_sensors htop iotop ddcutil i2c-tools
-$ echo "i2c-dev" > /etc/modules-load.d/i2c-dev.conf
+$ sudo vim /etc/modules-load.d/i2c-dev.conf
+i2c-dev
+
 $ sudo modprobe i2c-dev
 $ sudo sensors-detect
 全てEnter
@@ -424,6 +428,7 @@ options ... i915.enable_fbc=1 i915.fastboot=1
 ```
 
 * OpenCL
+    * Xeonの場合はintel-opencl-runtime
 ```
 $ yay -S intel-compute-runtime clinfo
 $ clinfo
@@ -433,22 +438,6 @@ $ clinfo
 ```
 $ yay -S ntfs-3g exfat-utils rsync
 ```
-
-* 日本語
-```
-$ yay -S otf-ipafont noto-fonts-cjk noto-fonts-emoji
-$ yay -S fcitx-mozc fcitx-gtk3 fcitx-configtool
-Fcitx Config > Input Method > Add input method > Only Show Current Language:アンチェック > Keybod - JapaneseとMozcを追加(Keyboard - English(US)は削除)
-$ sudo vim /etc/environment
-追加
-GTK_IM_MODULE=fcitx
-XMODIFIERS=@im=fcitx
-```
-
-* Google Chrome
-```
-$ yay -S google-chrome
-``` 
 
 * マルチメディア
 ```
@@ -460,24 +449,28 @@ hwdec=vaapi
 
 * 開発
 ```
-$ yay -S visual-studio-code-bin slack-desktop
+$ yay -S visual-studio-code-bin
 $ yay -S docker-compose
 $ sudo systemctl enable docker
 $ sudo systemctl start docker
 $ sudo usermod -aG docker ユーザ名
 ```
 
-* WiFi無効化
+* ミラーリスト
 ```
-$ sudo vim /etc/modprobe.d/iwlwifi.conf
-blacklist iwlwifi
-```
+$ yay -S reflector
+$ sudo reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist
+$ sudo vim /etc/pacman.d/hooks/mirrorupgrade.hook
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = pacman-mirrorlist
 
-* Bluetooth無効化
-```
-$ sudo vim /etc/modprobe.d/bluetooth.conf
-blacklist btusb
-blacklist bluetooth
+[Action]
+Description = Updating pacman-mirrorlist with reflector and removing pacnew...
+When = PostTransaction
+Depends = reflector
+Exec = /bin/sh -c "reflector --country 'Japan' --latest 5 --age 24 --sort rate --save /etc/pacman.d/mirrorlist;  rm -f /etc/pacman.d/mirrorlist.pacnew"
 ```
 
 * モニタ設定変更時はmonitors.xmlを毎回コピー
@@ -618,8 +611,9 @@ IOMMU group 9
 |コントローラ|IOMMU|IF|VM|接続デバイス|
 |-|-|-|-|-|
 |Intel USB 3.0 xHCI|3|2.0TypeA|-|キーボード/マウス(Unifying)|
-|upd720201 USB 3.0|9|3.0TypeA|Win|ゲームパッド|
 |upd720201 USB 3.0|9|3.0TypeA|Win|カメラ|
+|upd720201 USB 3.0|9|3.0TypeA|Win|ゲームパッド|
+|upd720201 USB 3.0|9|3.0TypeA|Win|Bluetooth|
 |upd720201 USB 3.0|9|3.0TypeA|Win|HMD|
 |GeForce GTX 1070|1|HDMI|Win|HMD|
 |GeForce GTX 1070|1|DP|Win|モニタ|
