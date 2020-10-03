@@ -656,8 +656,8 @@ $ yay -S qemu ovmf libvirt virt-manager dnsmasq ebtables dmidecode bridge-utils 
 
 |LV|VG|サイズ|
 |-|-|-|
-|lv_win10os|vg_ssd|100G|
-|lv_win10data|vg_hdd|100G|
+|lv_win10os2|vg_ssd|100G|
+|lv_win10data2|vg_ssd|400G|
 |lv_photo|vg_hdd|100G|
 
 ```
@@ -700,7 +700,8 @@ $ sudo systemctl enable virtlogd.socket
     * NVIDIAドライバは公式ページからダウンロードしたものをISO化(nvidia.iso)する
         * 自動的にドライバインストールされないようネットワーク未接続で作業するので、ドライバは事前ダウンロードしておく
 ```
-$ mkisofs -o nvidia.iso NVIDIAドライバファイル
+$ mkisofs -J -o nvidia-456.55.iso 456.55-desktop-win10-64bit-international-dch-whql.exe
+$ sudo mv nvidia-456.55.iso /var/lib/libvirt/images/
 ```
 
 * virt-managerを起動し、下記のとおり設定して、Begin Installationからインスール実施("Manually set CPU topology"は「VM only uses one core」対策)
@@ -708,16 +709,15 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
     * Local install media(ISO)
     * Windows10のISOを選択
     * Memory: 8192MiB、CPUs: 5
-    * Storage: /dev/vg_ssd/lv_win10os
+    * Storage: /dev/vg_ssd/lv_win10os2
     * Customize configuration before installにチェック
     * Add Hardware
-        * Storage > /var/vg_hdd/lv_win10data, Bus Type: VirtIO
-        * Storage > /var/vg_hdd/lv_photo, Bus Type: VirtIO
+        * Storage > /dev/vg_hdd/lv_win10data2, Bus Type: VirtIO
+        * Storage > /dev/vg_hdd/lv_photo, Bus Type: VirtIO
         * Storage > Device type: CD-ROM
-        * Controller > Type: SCSI, Model: VirtIO SCSI
     * Overview:
         * Chipset: Q35
-        * Firmware: UEFI
+        * Firmware: UEFI x86_64: /usr/share/ovmf/x64/OVMF_CODE.fd
     * CPUs:
         * Copy host CPU configurationのチェックを外す
         * Model: host-passthrough
@@ -727,9 +727,10 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
             * Threads: 1
         * Current allocation: 5
     * Boot Options:
+        * Enable boot menuにチェック
         * SATA CDROM1にチェック
     * SATA Disk1:
-        * Disk bus: SCSI
+        * Disk bus: VirtIO
     * SATA CDROM2:
         * Source path: ダウンロードしたVirtIOメディア(virtio-win-0.1.141.iso)
     * NIC:
@@ -737,9 +738,7 @@ $ mkisofs -o nvidia.iso NVIDIAドライバファイル
 
 ### Windows10インストール
 * Windows Updateを無効にするために、Pro版をインストールする
-* インストール時に、OS用ストレージのSCSIドライバが無くてドライブが見つからないので、ドライバの読み込みからインストールするドライバを選ぶ(ドライバメディアの/vioscsi/w10/amd64フォルダにある)
-    * データ用ストレージはWindowsのセットアップが全て完了して、必要になってからドライバ追加(ドライバメディアの/viostor/w10/amd64フォルダにある)して利用すればよい
-    * Bus TypeはSCSIよりVirtIOのほうがIO性能が1割ほど高かった(CrystalDiskMark)ので、OS用ストレージもVirtIOにすれば良かったかもしれない(SSDなのでそこまで気にしない)
+* インストール時に、OS用ストレージのVirtIOドライバが無くてドライブが見つからないので、ドライバの読み込みからインストールするドライバを選ぶ(ドライバメディアの/viosto/w10/amd64フォルダにある)
 * インストール中はNIC用VirtIOドライバがないためネットワーク接続できない
 * インストール後は、ネットワーク接続する前に、Windows Updateを無効にする
     * gpedit.msc実行 > コンピューターの構成 > 管理用テンプレート > Windowsコンポーネント > Windows Update > 自動更新を構成する > 有効 > 2-ダウンロードと自動インストールを通知 > OK
@@ -787,12 +786,6 @@ $ sudo virsh edit VM名
 </features>
 ```
 
-### Slowed down audio pumped through HDMI on the video card
-* DGPとオーディオデバイスのMSI(Message Signaled-Based Interrupts)を有効にする
-    1. Win10側で、デバイスマネージャー > 表示 > リソース(種類別) > 割り込み要求(IRQ) > (PCI)0x...(xx)の対象デバイス(xxがマイナス値なら既にMSI) > 右クリック > プロパティ > 詳細 > デバイスインスタンスパス確認
-    2. regedit > HKEY_LOCAL_MACHINE > SYSTEM > CurrentControlSet > Enum > デバイスインスタンスパス > Device Parameters > Interrupt Management > MessageSignaledInterruptPropertiesキー追加(既存の場合もある) > MSISupported値(DWORD)に1をセット
-    3. Win10を再起動し、デバイスマネージャーから対象デバイスがマイナス値になっていることを確認する
-
 ### CPU pinning
 * 設定値は環境による
 ```
@@ -813,6 +806,12 @@ $ sudo virsh edit VM名
 ### NVIDIAドライバ追加
 * 再びVMを起動して、CD-ROMのNVIDIAドライバをインストールする
 * NVIDIAコントロールパネルから、PhysX設定をDGPに明示的に設定(nvlddmkmエラー対策)
+
+### Slowed down audio pumped through HDMI on the video card
+* DGPとオーディオデバイスのMSI(Message Signaled-Based Interrupts)を有効にする
+    1. Win10側で、デバイスマネージャー > 表示 > リソース(種類別) > 割り込み要求(IRQ) > (PCI)0x...(xx)の対象デバイス(xxがマイナス値なら既にMSI) > 右クリック > プロパティ > 詳細 > デバイスインスタンスパス確認
+    2. regedit > HKEY_LOCAL_MACHINE > SYSTEM > CurrentControlSet > Enum > デバイスインスタンスパス > Device Parameters > Interrupt Management > MessageSignaledInterruptPropertiesキー追加(既存の場合もある) > MSISupported値(DWORD)に1をセット
+    3. Win10を再起動し、デバイスマネージャーから対象デバイスがマイナス値になっていることを確認する
 
 ### 仮想デバイス削除
 * ここまでVMが正常に機能していることが確認できたら、一旦VMをオフして、VMの不要デバイスを削除する
@@ -892,7 +891,7 @@ display_switch () {
         xrandr --output $display --auto
 }
 
-if [[ $1 == "win10" ]]; then
+if [[ $1 == "win10-2" ]]; then
     if [[ $2 == "started" ]]; then
         display_switch
         nohup /etc/libvirt/hooks/display_switch.py 0<&- &>/dev/null &
